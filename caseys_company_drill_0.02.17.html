@@ -1,0 +1,3392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#efe8d6">
+<title>Casey's Infantry Tactics — School of the Company</title>
+<style>
+  :root{
+    --parchment:#f4efe4; --parchment-2:#ece5d3; --paper:#fcfaf3;
+    --ink:#26221a; --ink-soft:#5a4a1f; --oxblood:#7a1f1b; --union:#16406e;
+    --brass:#b4a27a; --rule:#c9bc9e;
+  }
+  *{box-sizing:border-box}
+  html{height:100%}
+  body{height:100vh;height:100dvh;margin:0}
+  body{
+    font-family:Georgia,'Iowan Old Style','Palatino Linotype',serif;
+    background:var(--parchment); color:var(--ink);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:8px 14px; border-bottom:3px double var(--brass);
+    background:linear-gradient(180deg,#efe8d6,#e7dfc9);
+  }
+  header h1{
+    font-size:15px; margin:0 10px 0 0; font-variant:small-caps;
+    letter-spacing:.12em; color:var(--oxblood); white-space:nowrap;
+  }
+  header h1 span{color:var(--ink-soft); font-size:12px; letter-spacing:.06em}
+  .ctl{display:flex; align-items:center; gap:5px; font-size:12px; color:var(--ink-soft)}
+  .ctl input[type=range]{width:90px; accent-color:var(--oxblood)}
+  .ctl input[type=number]{width:52px; font-family:inherit; background:var(--paper);
+    border:1px solid var(--rule); padding:2px 4px}
+  .ctl input[type=checkbox]{accent-color:var(--oxblood)}
+  button{
+    font-family:inherit; font-size:12px; font-variant:small-caps; letter-spacing:.06em;
+    background:var(--oxblood); color:#f6efdd; border:none; padding:5px 12px;
+    cursor:pointer; border-radius:2px; touch-action:manipulation;
+  }
+  button:hover{background:#8f2a24}
+  #stateLbl{margin-left:auto; font-size:12px; font-weight:bold; color:var(--union);
+    text-align:right; min-width:220px}
+  #main{flex:1; display:flex; min-height:0}
+  nav#book{
+    width:330px; min-width:240px; overflow-y:auto; padding:10px 8px 30px;
+    border-right:2px solid var(--brass); background:var(--parchment-2);
+    font-size:13px;
+  }
+  nav#book h2{font-size:12px; font-variant:small-caps; letter-spacing:.1em;
+    color:var(--oxblood); margin:2px 4px 8px; border-bottom:1px solid var(--rule);
+    padding-bottom:5px}
+  details{margin:0 0 2px}
+  details>summary{
+    cursor:pointer; padding:4px 6px; font-weight:bold; list-style:none;
+    color:var(--ink); user-select:none;
+  }
+  details>summary::before{content:"❧"; color:var(--brass); margin-right:6px; font-weight:normal}
+  details[open]>summary::before{color:var(--oxblood)}
+  details.lesson>summary{font-variant:small-caps; letter-spacing:.08em}
+  details.article{margin-left:14px}
+  details.article>summary{font-weight:normal; font-style:italic; font-size:12.5px}
+  .cmd{
+    display:block; width:calc(100% - 26px); text-align:left; margin:2px 0 2px 26px;
+    background:var(--paper); color:var(--ink); border:1px solid var(--rule);
+    font-variant:normal; letter-spacing:0; font-size:12px; padding:4px 8px;
+    border-radius:2px; font-style:normal;
+  }
+  .cmd:hover{background:#fff; border-color:var(--oxblood); color:var(--oxblood)}
+  .cmd.textonly{color:#8a7f66; font-style:italic}
+  .artbtn{background:none;border:none;color:inherit;font:inherit;cursor:pointer;padding:0}
+  #field{flex:1; position:relative; min-width:0;
+    user-select:none; -webkit-user-select:none}
+  #cvWrap{position:relative; width:100%; height:100%;}
+  canvas{display:block; width:100%; height:100%; cursor:grab;
+    touch-action:none; -webkit-tap-highlight-color:transparent}
+  #drawerBtns{display:none; position:absolute; top:8px; left:8px; z-index:40; gap:6px}
+  #drawerBtns button{box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  canvas.dragging{cursor:grabbing}
+  button.cmd:disabled{opacity:.35; cursor:not-allowed; text-decoration:line-through}
+  #legend{
+    position:absolute; left:10px; bottom:8px; font-size:11px; color:#444;
+    background:rgba(252,250,243,.85); border:1px solid var(--rule);
+    padding:4px 10px; border-radius:3px; display:flex; gap:12px; align-items:center;
+    pointer-events:none;
+  }
+  #legend .sw{display:inline-block; width:11px; height:11px; border-radius:50%;
+    border:1.5px solid #444; vertical-align:-2px; margin-right:4px}
+  aside#panel{
+    width:360px; min-width:260px; border-left:2px solid var(--brass);
+    background:var(--paper); display:flex; flex-direction:column;
+  }
+  aside#panel h2{
+    font-size:13px; margin:0; padding:10px 14px 8px; font-variant:small-caps;
+    letter-spacing:.1em; color:var(--oxblood); border-bottom:1px solid var(--rule);
+  }
+  #ptext{flex:1; overflow-y:auto; padding:12px 16px 30px; font-size:13.5px;
+    line-height:1.55; white-space:pre-wrap}
+  #ptext .note{display:block; margin-top:14px; font-style:italic; font-size:12.5px;
+    color:var(--ink-soft); border-top:1px dotted var(--rule); padding-top:8px}
+  #ptext .warn{display:block; margin-top:12px; font-weight:bold; color:var(--oxblood)}
+  /* ---- mobile / narrow layout: panels become overlay drawers ---- */
+  @media (max-width:900px){
+    #main{position:relative}
+    #drawerBtns{display:flex}
+    nav#book, aside#panel{
+      position:absolute; top:0; bottom:0; z-index:30;
+      width:min(85vw,340px); min-width:0;
+      transition:transform .22s ease; box-shadow:0 0 18px rgba(0,0,0,.3);
+    }
+    nav#book{left:0; transform:translateX(-105%); border-right-width:1px}
+    nav#book.open{transform:none}
+    aside#panel{right:0; transform:translateX(105%); border-left-width:1px}
+    aside#panel.open{transform:none}
+  }
+  @media (max-width:700px){
+    #legend{display:none}
+    header h1 span{display:none}
+  }
+  /* ---- finger-friendly targets on touch-first devices only ---- */
+  @media (pointer:coarse){
+    button{padding:10px 14px; font-size:14px}
+    .cmd{font-size:14px; padding:10px 10px}
+    details>summary{padding:9px 6px}
+    nav#book{font-size:14.5px}
+    #ptext{font-size:15px; line-height:1.6}
+    .ctl input[type=range]{width:120px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Casey's Infantry Tactics <span>— School of the Company (1862)</span></h1>
+  <label class="ctl">Files <input type="number" id="inFiles" min="8" max="48" value="20"></label>
+  <label class="ctl"><input type="checkbox" id="inCpl8" checked> 8 corporals</label>
+  <label class="ctl"><input type="checkbox" id="in3Lt"> 3rd Lieut.</label>
+  <label class="ctl">Speed <input type="range" id="inSpeed" min="1" max="10" step="0.5" value="3"></label>
+  <label class="ctl">Zoom <input type="range" id="inZoom" min="0.4" max="2.2" step="0.05" value="1"></label>
+  <label class="ctl"><input type="checkbox" id="inFollow" checked> Follow</label>
+  <label class="ctl"><input type="checkbox" id="inUnits" checked> Labels</label>
+  <label class="ctl"><input type="checkbox" id="inArrows"> Keep arrows</label>
+  <button id="btnReset">Reset formation</button>
+  <div id="stateLbl"></div>
+</header>
+<div id="main">
+  <nav id="book"><h2>The Drill Book</h2><div id="tree"></div></nav>
+  <div id="field">
+    <div id="drawerBtns">
+      <button id="btnBook">☰ Book</button>
+      <button id="btnManual">§ Manual</button>
+    </div>
+    <canvas id="cv"></canvas>
+    <div id="readyBadge" style="position:absolute;top:8px;right:132px;border:1px solid #bbb;border-radius:4px;padding:3px 8px;font:bold 12px sans-serif;pointer-events:none;z-index:10;background:#d9ecd0;color:#2c6b2f;">READY</div>
+    <div id="coordDisplay" style="position:absolute;top:8px;right:8px;background:rgba(255,255,255,0.82);border:1px solid #bbb;border-radius:4px;padding:3px 8px;font:12px monospace;pointer-events:none;z-index:10;">x: — , y: —</div>
+    <div id="legend">
+      <span><span class="sw" style="background:#FFD24D"></span>Captain</span>
+      <span><span class="sw" style="background:#FFB84D"></span>Lieut.</span>
+      <span><span class="sw" style="background:#F08272"></span>Sergeant</span>
+      <span><span class="sw" style="background:#8FD693"></span>Corporal</span>
+      <span><span class="sw" style="background:#7FB3E8"></span>Private</span>
+      <span>ring: <b style="color:#16406e">blue</b>=1st plt, <b style="color:#7a1f1b">red</b>=2d plt · tick=facing</span>
+    </div>
+  </div>
+  <aside id="panel">
+    <h2 id="ptitle">From the manual</h2>
+    <div id="ptext"></div>
+  </aside>
+</div>
+
+<script>
+/*MODEL-START*/
+"use strict";
+// ---------------------------------------------------------------------------
+// Casey's Infantry Tactics (1862) -- School of the Company: drill model.
+// World units are PACES; screen y grows downward; the company starts facing
+// "north" (screen up).  All movement logic lives in CompanyModel (no DOM).
+// ---------------------------------------------------------------------------
+const UP = -Math.PI / 2;
+const FW = 1.0;              // interval between files (stylized)
+const RANKD = 1.1;           // front-rank to rear-rank depth
+const CLOSERD = RANKD + 2.0; // file closers: two paces behind the rear rank
+const OPEN_RANKD = 4.0;      // opened ranks: rear rank 4 paces from front
+const MARCH_PACES = 12;
+
+function vec(h){ return [Math.cos(h), Math.sin(h)]; }
+function add(p, v, k){ return [p[0] + v[0]*k, p[1] + v[1]*k]; }
+function sub(a, b){ return [a[0]-b[0], a[1]-b[1]]; }
+function dot(a, b){ return a[0]*b[0] + a[1]*b[1]; }
+function dist(a, b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+function rotAbout(p, c, a){
+  const rx = p[0]-c[0], ry = p[1]-c[1], ca = Math.cos(a), sa = Math.sin(a);
+  return [c[0] + rx*ca - ry*sa, c[1] + rx*sa + ry*ca];
+}
+function arcPoints(p, c, aTot, steps){
+  steps = steps || 24;
+  const out = [];
+  for(let i = 1; i <= steps; i++) out.push(rotAbout(p, c, aTot*i/steps));
+  return out;
+}
+function samplePath(fn, n){
+  n = n || 48;
+  const out = [];
+  for(let i = 1; i <= n; i++) out.push(fn(i/n));
+  return out;
+}
+function centroid(pts){
+  let x = 0, y = 0;
+  for(const p of pts){ x += p[0]; y += p[1]; }
+  return [x/pts.length, y/pts.length];
+}
+
+class Man{
+  constructor(id, label, role, platoon, section, rank, desc){
+    this.id = id; this.label = label; this.role = role;
+    this.platoon = platoon; this.section = section; this.rank = rank;
+    this.desc = desc;
+    this.pos = [0,0]; this.facing = UP;
+    this.path = null; this.cum = null; this.length = 0; this.timed = false;
+    this.fileI = null;
+  }
+  setTimedPath(pts){
+    this.path = [this.pos].concat(pts);
+    this.timed = true;
+    this.length = 0;
+    for(let i = 1; i < this.path.length; i++)
+      this.length += dist(this.path[i-1], this.path[i]);
+    if(this.length < 1e-9){ this.path = null; this.timed = false; }
+  }
+  setPath(pts){
+    this.timed = false;
+    const all = [this.pos].concat(pts);
+    const clean = [all[0]];
+    for(let i = 1; i < all.length; i++)
+      if(dist(all[i], clean[clean.length-1]) > 1e-9) clean.push(all[i]);
+    if(clean.length === 1){ this.path = null; this.length = 0; return; }
+    this.path = clean;
+    this.cum = [0];
+    for(let i = 1; i < clean.length; i++)
+      this.cum.push(this.cum[i-1] + dist(clean[i-1], clean[i]));
+    this.length = this.cum[this.cum.length-1];
+  }
+  pointAtFraction(f){
+    if(!this.path) return this.pos;
+    f = Math.max(0, Math.min(1, f));
+    if(this.timed){
+      const x = f * (this.path.length - 1);
+      const i = Math.min(Math.floor(x), this.path.length - 2);
+      const t = x - i, a = this.path[i], b = this.path[i+1];
+      return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+    }
+    const d = this.length * f;
+    for(let i = 1; i < this.path.length; i++){
+      if(d <= this.cum[i] || i === this.path.length - 1){
+        const seg = this.cum[i] - this.cum[i-1];
+        const t = seg <= 1e-12 ? 0 : (d - this.cum[i-1]) / seg;
+        const a = this.path[i-1], b = this.path[i];
+        return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+      }
+    }
+    return this.path[this.path.length-1];
+  }
+}
+
+class CompanyModel{
+  constructor(nFiles, corporals8, incl3Lt){ this.build(nFiles, corporals8, incl3Lt); }
+
+  build(nFiles, corporals8, incl3Lt){
+    const n = Math.max(8, Math.floor(nFiles || 20));
+    corporals8 = corporals8 !== false;
+    let n1 = Math.floor(n/2);
+    if(n1 % 2) n1 += 1;
+    n1 = Math.min(n1, n - 2);
+    const n2 = n - n1, s1 = Math.floor(n1/2), s3 = Math.ceil(n2/2);
+    this.nFiles = n; this.n1 = n1; this.n2 = n2; this.s1 = s1; this.s3 = s3;
+    this.heading = UP; this.colDir = UP; this.state = "LINE_HALT";
+    this.men = new Map(); this.order = [];
+    const sectionOf = i => i < s1 ? 1 : i < n1 ? 2 : i < n1 + s3 ? 3 : 4;
+    const fx = i => -i * FW;
+    const put = (m, x, y) => { m.pos = [x, y]; this.men.set(m.id, m); this.order.push(m.id); };
+
+    put(new Man("capt","C","captain",1,null,"front",
+      "Captain — posted on the right of the company, in the front rank, "+
+      "touching elbows with the man on his left (Title First, par. 13)."), FW, 0);
+    put(new Man("1S","1S","sergeant",1,null,"cover",
+      "First Sergeant — 'covering sergeant' or right guide; rear rank, "+
+      "covering the captain (Title First, par. 14)."), FW, RANKD);
+
+    // Par. 15: ALL corporals are posted in the FRONT rank, on the right and
+    // left of platoons, according to height — two at each platoon flank when
+    // eight are present, numbered from the tallest (C-1, first file, right
+    // of the company) to the shortest (last file, left of the company).
+    // Each corporal is covered by a private in the rear rank.
+    const cplFront = [...new Set(corporals8
+      ? [0, 1, n1-2, n1-1, n1, n1+1, n-2, n-1]
+      : [0, n1-1, n1, n-1])];
+    const cplFiles = new Map();
+    let k = 1;
+    for(const i of cplFront){
+      cplFiles.set(i, { front: k++ });
+    }
+
+    let pvt = 1;
+    for(let i = 0; i < n; i++){
+      const plt = i < n1 ? 1 : 2, sec = sectionOf(i);
+      for(const [rank, y] of [["front",0],["rear",RANKD]]){
+        const c = cplFiles.has(i) ? cplFiles.get(i)[rank] : null;
+        if(c){
+          put(new Man("C-"+c, "C-"+c, "corporal", plt, sec, rank,
+            "Corporal "+c+" — posted in the front rank on the flank of the "+
+            (plt===1?"1st":"2d")+" platoon, according to height (par. 15)."), fx(i), y);
+        }else{
+          put(new Man("P-"+pvt, ""+pvt, "private", plt, sec, rank,
+            "Private No. "+pvt+" — "+rank+" rank, file "+(i+1)+", "+
+            (plt===1?"1st":"2d")+" Platoon, Section "+sec+"."), fx(i), y);
+          pvt++;
+        }
+      }
+    }
+    this.nPrivates = pvt - 1;
+
+    const center = files => -(files.reduce((a,b)=>a+b,0)/files.length) * FW;
+    const range = (a,b) => { const r=[]; for(let i=a;i<b;i++) r.push(i); return r; };
+    const sec4Files = range(n1+s3, n), plt1Files = range(0, n1), plt2Files = range(n1, n);
+
+    put(new Man("1L","1L","lieutenant",2,null,"closer",
+      "First Lieutenant — file closer, opposite the centre of the 4th section "+
+      "(Title First, par. 16). Chief of the 2d platoon when the company breaks "+
+      "into platoons."), center(sec4Files), CLOSERD);
+    put(new Man("2L","2L","lieutenant",1,null,"closer",
+      "Second Lieutenant — file closer, opposite the centre of the 1st platoon "+
+      "(Title First, par. 17)."), center(plt1Files), CLOSERD);
+    if(incl3Lt)
+      put(new Man("3L","3L","lieutenant",2,null,"closer",
+        "Third Lieutenant — file closer, opposite the centre of the 2d platoon "+
+        "(Title First, par. 18)."), center(plt2Files), CLOSERD);
+    put(new Man("2S","2S","sergeant",2,null,"closer",
+      "Second Sergeant — left guide of the company; file closer opposite the "+
+      "second file from the left (Title First, par. 19)."), fx(n-2), CLOSERD);
+    put(new Man("3S","3S","sergeant",2,null,"closer",
+      "Third Sergeant — file closer opposite the second file from the right of "+
+      "the 2d platoon (Title First, par. 20)."), fx(n1+1), CLOSERD);
+    put(new Man("4S","4S","sergeant",1,null,"closer",
+      "Fourth Sergeant — file closer opposite the second file from the left of "+
+      "the 1st platoon (Title First, par. 21)."), fx(n1-2), CLOSERD);
+    put(new Man("5S","5S","sergeant",1,null,"closer",
+      "Fifth Sergeant — file closer opposite the second file from the right of "+
+      "the 1st platoon (Title First, par. 22)."), fx(1), CLOSERD);
+
+    for(const m of this.men.values()){ m.facing = UP; m.path = null; }
+  }
+
+  F(){ return vec(this.heading); }
+  menArr(){ return Array.from(this.men.values()); }
+  extremeFrontMan(platoon, dir){
+    let best = null, bestD = -Infinity;
+    for(const m of this.men.values())
+      if(m.platoon === platoon && m.rank === "front"){
+        const d = dot(m.pos, dir);
+        if(d > bestD){ bestD = d; best = m; }
+      }
+    return best;
+  }
+  platoonMembers(p){ return this.menArr().filter(m => m.platoon === p); }
+  faceAll(a, members){ for(const m of (members || this.menArr())) m.facing = a; }
+  clearPaths(){ for(const m of this.men.values()){ m.path = null; m.length = 0; } }
+  finish(){
+    for(const m of this.men.values())
+      if(m.path){ m.pos = m.path[m.path.length-1]; m.path = null; }
+    this._captSpeedMult = 1;
+  }
+  lineOrigin(){
+    const R = vec(this.heading + Math.PI/2);
+    let best = null, bestD = -Infinity;
+    for(const m of this.men.values())
+      if(m.rank === "front" && m.id !== "capt"){
+        const d = dot(m.pos, R);
+        if(d > bestD){ bestD = d; best = m; }
+      }
+    return best.pos;
+  }
+
+  // ---------------- Lesson I: open / close ranks ----------------
+  odOpenPrep(){
+    if(this.state !== "LINE_HALT")
+      return "The ranks can only be opened from the halted line of battle.";
+    this.clearPaths();
+    const g = this.men.get("2S");
+    const L = vec(this.heading - Math.PI/2);
+    const lm = this.extremeFrontMan(2, L);
+    g.setPath([add(lm.pos, L, FW)]);
+    this.state = "OPEN_PREP"; return null;
+  }
+  odOpenOrder(){
+    if(this.state !== "OPEN_PREP")
+      return "First have the left guide (2S) posted on the left of the front rank (previous command).";
+    this.clearPaths();
+    const B = vec(this.heading + Math.PI);
+    this.men.get("1S").setPath([add(this.men.get("1S").pos, B, OPEN_RANKD - RANKD)]);
+    this.men.get("2S").setPath([add(this.men.get("2S").pos, B, OPEN_RANKD)]);
+    this.state = "OPEN_MARKED"; return null;
+  }
+  odOpenMarch(){
+    if(this.state !== "OPEN_MARKED")
+      return "'MARCH' here follows 'To the rear, open order' (previous command).";
+    this.clearPaths();
+    const B = vec(this.heading + Math.PI);
+    for(const m of this.men.values()){
+      if(m.id === "2S") continue;
+      if(m.rank === "rear") m.setPath([add(m.pos, B, OPEN_RANKD - RANKD)]);
+      else if(m.rank === "closer") m.setPath([add(m.pos, B, (OPEN_RANKD + 2) - CLOSERD)]);
+    }
+    this.state = "OPEN_RANKS"; return null;
+  }
+  odOpenFront(){
+    if(this.state !== "OPEN_RANKS")
+      return "'FRONT' here follows the MARCH that opened the ranks.";
+    this.clearPaths();
+    const g = this.men.get("2S");
+    const B = vec(this.heading + Math.PI), L = vec(this.heading - Math.PI/2);
+    const base = this.lineOrigin();
+    let p = add(base, L, (this.nFiles - 2) * FW);
+    p = add(p, B, OPEN_RANKD + 2);
+    g.setPath([p]);
+    this.state = "OPEN_DONE"; return null;
+  }
+  odCloseOrder(){
+    if(this.state !== "OPEN_RANKS" && this.state !== "OPEN_DONE")
+      return "The ranks are not open.";
+    this.clearPaths();
+    const F = this.F();
+    for(const m of this.men.values()){
+      if(m.rank === "rear" || m.rank === "cover")
+        m.setPath([add(m.pos, F, OPEN_RANKD - RANKD)]);
+      else if(m.rank === "closer" || m.id === "2S")
+        m.setPath([add(m.pos, F, (OPEN_RANKD + 2) - CLOSERD)]);
+    }
+    this.state = "LINE_HALT"; return null;
+  }
+
+  // ---------------- Lesson III: line of battle ----------------
+  // Note: the "six paces in front" posting of the covering sergeant is a
+  // TRAINING device only (S.C. par. 104).  In the field the 1S stays in the
+  // rear rank covering the captain throughout the advance.
+  odCompanyForward(){
+    if(this.state !== "LINE_HALT")
+      return "'Company, forward' is given with the company halted, in line of "+
+             "battle, ranks closed.  (Use Reset, or halt and re-form the line first.)";
+    this.clearPaths();
+    // 1S stays in the rear rank — no path needed
+    this.state = "LINE_MARCH"; return null;
+  }
+  odLineMarch(){
+    if(this.state !== "LINE_MARCH")
+      return "'MARCH' here follows 'Company, forward.'";
+    this.clearPaths();
+    const F = this.F();
+    for(const m of this.men.values()) m.setPath([add(m.pos, F, MARCH_PACES)]);
+    this.state = "LINE_MARCH"; return null;
+  }
+  odLineHalt(){
+    if(this.state !== "LINE_MARCH" && this.state !== "OBLIQUE_MARCH")
+      return "The company is not marching in line of battle.";
+    this.clearPaths();
+    // Halting from the oblique: the men face to the front and the rear rank
+    // steps back into habitual cover behind their own file leaders, restoring
+    // the original formation.
+    if(this.state === "OBLIQUE_MARCH"){
+      const F = this.F();
+      if(this._oblPairs)
+        for(const [rid, lid] of this._oblPairs){
+          const rman = this.men.get(rid);
+          const tgt = add(this.men.get(lid).pos, F, -RANKD);
+          if(dist(rman.pos, tgt) > 1e-9) rman.setPath([tgt]);
+        }
+      this._oblPairs = null;
+      this.faceAll(this.heading);
+    }
+    this.state = "LINE_HALT"; return null;
+  }
+
+  // ---- Lesson III, Art. 3: the oblique march in line of battle (101-108) --
+  _buildObliquePairs(){
+    // Pair every rear-rank man with his habitual file leader by geometry:
+    // at the moment the oblique begins the rear rank is in exact cover, so
+    // the leader is the front-rank man at the same lateral position. The
+    // pairing is remembered for the duration of the oblique, because the
+    // echelon then shifts the rear rank one file sideways (par. 102).
+    const Rv = vec(this.heading + Math.PI/2);
+    const fronts = [];
+    for(const x of this.men.values())
+      if(x.rank === "front") fronts.push(x);
+    const pairs = new Map();
+    for(const m of this.men.values()){
+      if(m.rank === "rear"){
+        let best = null, bd = Infinity;
+        for(const x of fronts){
+          const d = Math.abs(dot(m.pos, Rv) - dot(x.pos, Rv));
+          if(d < bd){ bd = d; best = x; }
+        }
+        if(best && bd < 0.3) pairs.set(m.id, best.id);
+      }
+    }
+    // 1S echelons with the captain as leader, but only when he actually
+    // stands at his habitual cover — after some evolutions (e.g. forming
+    // line from the flank) he serves as a flank guide and simply obliques.
+    const capt = this.men.get("capt"), s1 = this.men.get("1S");
+    if(dist(s1.pos, add(capt.pos, this.F(), -RANKD)) < 0.5)
+      pairs.set("1S", "capt");
+    this._oblPairs = pairs;
+  }
+  odOblique(right){
+    if(this.state !== "LINE_MARCH" && this.state !== "LINE_HALT" &&
+       this.state !== "OBLIQUE_MARCH")
+      return "'Right (left) oblique--MARCH' is given with the company in "+
+             "line of battle, marching or at a halt (par. 101).";
+    this.clearPaths();
+    if(this.state !== "OBLIQUE_MARCH") this._buildObliquePairs();
+    const side = vec(this.heading + (right ? 1 : -1) * Math.PI/2);
+    const obl  = vec(this.heading + (right ? 1 : -1) * Math.PI/4);
+    for(const m of this.men.values()){
+      const leaderId = this._oblPairs.get(m.id);
+      if(leaderId){
+        // echelon: in rear (along the oblique) of the leader's side neighbor
+        const leaderFinal = add(this.men.get(leaderId).pos, obl, MARCH_PACES);
+        m.setPath([add(add(leaderFinal, side, FW), obl, -RANKD)]);
+      } else {
+        m.setPath([add(m.pos, obl, MARCH_PACES)]);
+      }
+    }
+    // The men half-face toward the oblique (S.S. 340); the guide passes,
+    // without indication, to the side toward which the oblique is made (105).
+    this.faceAll(this.heading + (right ? 1 : -1) * Math.PI/4);
+    this._oblRight = right;
+    this.state = "OBLIQUE_MARCH"; return null;
+  }
+  odObliqueForward(){
+    if(this.state !== "OBLIQUE_MARCH")
+      return "'Forward--MARCH' here resumes the direct march from the "+
+             "oblique (par. 103).";
+    this.clearPaths();
+    const F = this.F();
+    for(const m of this.men.values()){
+      const leaderId = this._oblPairs.get(m.id);
+      if(leaderId){
+        // resume habitual cover: directly behind the own file leader (104)
+        const leaderFinal = add(this.men.get(leaderId).pos, F, MARCH_PACES);
+        m.setPath([add(leaderFinal, F, -RANKD)]);
+      } else {
+        m.setPath([add(m.pos, F, MARCH_PACES)]);
+      }
+    }
+    this._oblPairs = null;
+    this.faceAll(this.heading);
+    this.state = "LINE_MARCH"; return null;
+  }
+
+  // ---------------- Lesson IV: march by the flank ----------------
+  // Shared logic for both right-face and left-face.
+  // RIGHT-FACE (par. 131-132): captain steps one pace forward then turns right;
+  //   1S steps forward into captain's vacated spot then turns right — so 1S
+  //   stands at the head of the front rank (directly ahead of C-1 / right flank).
+  //   Captain is on 1S's LEFT (one file to his left in march direction).
+  // LEFT-FACE (par. 143): mirror image — left guide (1S, or when designated the
+  //   left-flank NCO) steps to head of front rank on the left end; captain passes
+  //   rapidly to the right side of that guide.
+  _odFlankFace(toRight){
+    if(this.state !== "LINE_HALT")
+      return "'Company, " + (toRight ? "right" : "left") + "--FACE' is given from the halted line of battle.";
+    this.clearPaths();
+    this._captSpeedMult = 1;
+    const turn = toRight ? Math.PI/2 : -Math.PI/2;
+    const D = this.heading + turn;           // new march direction
+    const Dv = vec(D);                       // forward in new direction
+    const Rv = vec(D + Math.PI/2);           // rightward in new direction
+
+    // Captain's and 1S's pre-face positions, stored for FRONT reversal
+    const captOrigPos = this.men.get("capt").pos.slice();
+    const sgOrigPos   = this.men.get("1S").pos.slice();
+    this._flankCaptOrigin = captOrigPos;
+    this._sgOrigin        = sgOrigPos;
+    this._flankRight      = toRight;
+
+    // Rank-and-file (excludes capt and 1S, handled separately)
+    const rankAndFile = this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") && m.id !== "capt" && m.id !== "1S");
+    const frontRankOnly = rankAndFile.filter(m => m.rank === "front");
+
+    if(toRight){
+      // ---- RIGHT FACE ----
+      // Pivot = C-1 (rightmost front-rank man, which is captOrigPos after capt steps out).
+      // 1S steps forward into captain's vacated front-rank spot → head of column (captOrigPos).
+      // Captain stands one pace to the LEFT of 1S in the march direction.
+      // File closers shift to the RIGHT (outer) flank.
+      const O = captOrigPos;  // pivot = capt's old spot = rightmost front-rank position
+
+      this.men.get("1S").setPath([O.slice()]);
+      this.men.get("1S").fileI = null;
+      this.men.get("capt").setPath([add(O, Rv, -FW)]);
+      this.men.get("capt").fileI = null;
+
+      // Rank-and-file double rightward.
+      // Origin for doubling = rightmost front-rank man in the rank-and-file (C-1 at [0,0]).
+      // i=0 is C-1 (rightmost), increases leftward. Same as original code.
+      let rfOrigin = rankAndFile.filter(m => m.rank === "front")[0];
+      for(const m of rankAndFile.filter(m => m.rank === "front"))
+        if(dot(m.pos, Dv) > dot(rfOrigin.pos, Dv)) rfOrigin = m;
+      const Or = rfOrigin.pos;  // C-1's position
+      for(const m of rankAndFile){
+        const i = Math.round(-dot(sub(m.pos, Or), Dv) / FW);
+        m.fileI = i;
+        const k = Math.floor(i/2);
+        const lane = m.rank === "front" ? (i%2===0 ? 0 : 1) : (i%2===0 ? 2 : 3);
+        m.setPath([add(add(Or, Dv, -2*k*FW), Rv, lane*FW)]);
+      }
+      // File closers shift to right (outer) flank
+      for(const m of this.menArr()){
+        if(m.rank !== "closer") continue;
+        m.fileI = null;
+        const lat = dot(sub(m.pos, Or), Rv);
+        m.setPath([add(m.pos, Rv, 4.2*FW - lat)]);
+      }
+
+    } else {
+      // ---- LEFT FACE ----
+      // Pivot = C-4 (leftmost front-rank man). He does NOT move, only faces left.
+      // 1S steps into captain's vacated front-rank spot (tail of column, in line with rank-and-file).
+      // 2S leaves file closers → moves to the head of the column, in front of P-32 (lane 3).
+      // Captain goes around the left of the column → head, one pace to the RIGHT of 2S.
+      // File closers (except 2S) stay in place — just face left.
+
+      // Find pivot (leftmost front-rank man = C-4)
+      let pivotMan = frontRankOnly[0];
+      for(const m of frontRankOnly)
+        if(dot(m.pos, Dv) > dot(pivotMan.pos, Dv)) pivotMan = m;
+      this._flankPivotId = pivotMan.id;
+      const Ol = pivotMan.pos;  // C-4's position — never moves
+
+      // 1S only faces left in place — no path (faceAll handles the turn below)
+      this.men.get("1S").fileI = null;
+
+      // Rank-and-file double leftward into column of fours.
+      // Lane direction = vec(D - π/2) = [0,+1] = old backward = C-4's LEFT when facing left.
+      // (Rv = vec(D + π/2) = [0,-1] = old forward = C-4's RIGHT — we must NOT use that here.)
+      const Ld = vec(D - Math.PI/2);  // [0,+1]: lane direction = C-4's left when facing left
+      // fileI counts from the RIGHT (C-1=0, C-4=n-1), same convention as right-face,
+      // so odFlankHaltFront can use the identical rebuild formula for both faces.
+      let rfOriginL = rankAndFile.filter(m => m.rank === "front")[0];
+      for(const m of rankAndFile.filter(m => m.rank === "front"))
+        if(dot(m.pos, Dv) < dot(rfOriginL.pos, Dv)) rfOriginL = m;  // find C-1 (rightmost)
+      const n_files = this.nFiles;
+      for(const m of rankAndFile){
+        const i = Math.round(dot(sub(m.pos, rfOriginL.pos), Dv) / FW);
+        m.fileI = i;  // 0=C-1(rightmost/tail), n-1=C-4(leftmost/lead)
+        // k = group index from the LEFT (leading end): C-4 group is k=0, trailing group is k=max
+        const k = Math.floor((n_files - 1 - i) / 2);
+        // Within each group, C-4-side file (larger i = more leftward) gets lane 0 or 2;
+        // the adjacent file (smaller i) gets lane 1 or 3.
+        const laneParity = (n_files - 1 - i) % 2;
+        const lane = m.rank === "front" ? laneParity : laneParity + 2;
+        m.setPath([add(add(Ol, Dv, -2*k*FW), Ld, lane*FW)]);
+      }
+
+      // 2S: moves from file closers to head of column, directly in front of C-4 (lane 0).
+      const sg2s = this.men.get("2S");
+      const headOf2S = add(Ol, Dv, FW);   // one pace forward of C-4, same lane (y=0)
+      sg2s.setPath([headOf2S]);
+      sg2s.fileI = null;
+
+      // Captain: routes in FRONT of the company to the head of the column.
+      // Path: step 2 paces forward (clear of front rank), traverse left past C-4, arrive at spot.
+      // Right when facing left = -Ld = old forward = [0,-1].
+      const captFinalPos = add(headOf2S, Ld, -FW);
+      const Fv2 = vec(this.heading);           // old forward direction
+      const captWp1 = add(captOrigPos, Fv2, 2);       // 2 paces forward, clear of front rank
+      const captWp2 = [Ol[0] - 2*FW, captWp1[1]];    // traverse left past C-4 (same y)
+      this.men.get("capt").setPath([captWp1, captWp2, captFinalPos]);
+      this.men.get("capt").fileI = null;
+      this._captSpeedMult = 1.5;
+      // Store waypoints so FRONT can retrace the path in reverse
+      this._captLeftWaypoints = [captWp1, captWp2];
+
+      // File closers (except 2S): step 2 paces backward (old-backward = Ld direction)
+      // to clear the rank-and-file as they double, then face left via faceAll below.
+      const Bv = vec(this.heading + Math.PI);  // old backward direction
+      for(const m of this.menArr()){
+        if(m.rank !== "closer" || m.id === "2S") continue;
+        m.fileI = null;
+        m.setPath([add(m.pos, Bv, 2)]);
+      }
+    }
+
+    this.colDir = D;
+    this.faceAll(D);
+    this._perManAnim = !toRight;  // left-face uses per-man independent timing
+    this.state = "FLANK_FACED"; return null;
+  }
+  odRightFace(){ return this._odFlankFace(true); }
+  odLeftFace(){  return this._odFlankFace(false); }
+  odFlankMarch(){
+    if(this.state !== "FLANK_FACED" && this.state !== "FLANK_MARCH")
+      return "'Forward--MARCH' here follows 'Company, right (or left)--FACE.'";
+    this.clearPaths();
+    this._captSpeedMult = 1;
+    const D = vec(this.colDir);
+    for(const m of this.men.values()) m.setPath([add(m.pos, D, MARCH_PACES)]);
+    this.state = "FLANK_MARCH"; return null;
+  }
+  odByFile(left){
+    if(this.state !== "FLANK_MARCH" && this.state !== "FLANK_FACED")
+      return "'By file left (right)--MARCH' is executed while the company is "+
+             "marching by the flank.";
+    this.clearPaths();
+    this._captSpeedMult = 1;
+    const D = vec(this.colDir), Rv = vec(this.colDir + Math.PI/2);
+    const turn = left ? -Math.PI/2 : Math.PI/2;
+    const nd = this.colDir + turn, NDv = vec(nd);
+    const men = this.menArr();
+    let head = men[0];
+    for(const m of men) if(dot(m.pos, D) > dot(head.pos, D)) head = m;
+    const H = head.pos;
+    const aM = new Map(), sM = new Map();
+    for(const m of men){
+      aM.set(m.id, dot(sub(m.pos, H), D));
+      sM.set(m.id, dot(sub(m.pos, H), Rv));
+    }
+    const isCloser = m => m.fileI === null && m.id !== "capt" && m.id !== "1S";
+    const lanes = men.map(m => sM.get(m.id));
+    const sInner = left ? Math.min(...lanes) : Math.max(...lanes);
+    const PR = 2.0;                              // pivot-arc radius
+    const sC = left ? sInner - PR : sInner + PR;
+    const LEAD = 2.0;                            // wheeling ground ahead of the head
+    const Cc = add(add(H, D, LEAD), Rv, sC);
+    const depth = Math.max(...men.map(m => -aM.get(m.id)));
+    const E = depth + 2.0;
+    // common angular window sized on the rank-and-file outer radius
+    let Rstar = 1;
+    for(const m of men)
+      if(!isCloser(m)) Rstar = Math.max(Rstar, Math.abs(sM.get(m.id) - sC));
+    const Tstar = LEAD + E + Rstar * Math.PI/2;
+    for(const m of men){
+      const a = aM.get(m.id), s = sM.get(m.id);
+      const d1 = LEAD - a, e = E + a;
+      const t1 = d1 / Tstar, t2 = (d1 + Rstar * Math.PI/2) / Tstar;
+      const arcStart = add(add(H, D, LEAD), Rv, s);
+      const arcEnd = rotAbout(arcStart, Cc, turn);
+      const p0 = m.pos.slice();
+      const fn = t => {
+        if(t <= t1) return add(p0, D, d1 * (t1 <= 0 ? 1 : t/t1));
+        if(t <= t2) return rotAbout(arcStart, Cc, turn * (t - t1)/(t2 - t1));
+        return add(arcEnd, NDv, e * (t - t2)/(1 - t2));
+      };
+      m.setTimedPath(samplePath(fn, 60));
+    }
+    this.colDir = nd;
+    this.faceAll(nd);
+    this.state = "FLANK_MARCH"; return null;
+  }
+  odFlankHaltFront(){
+    if(this.state !== "FLANK_MARCH" && this.state !== "FLANK_FACED")
+      return "The company is not marching by the flank.";
+    this.clearPaths();
+    const wasRight = (this._flankRight !== false);
+    this.heading = wasRight ? this.colDir - Math.PI/2 : this.colDir + Math.PI/2;
+    const B = vec(this.heading + Math.PI), Lv = vec(this.heading - Math.PI/2);
+    const n = this.nFiles, n1 = this.n1, s3 = this.s3;
+
+    // Determine anchor O = the rightmost front-rank position (C-1's spot).
+    // RIGHT FACE: 1S is at C-1's position + one pace right (he stepped into capt's spot).
+    //   O = add(1S.pos, Lv, FW) shifts one pace left → lands on C-1. ✓
+    // LEFT FACE: C-4 (pivot) never moved. fileI=0 is C-4, fileI=n-1 is C-1.
+    //   O = add(C-4.pos, Lv, -(n-1)*FW) shifts rightward by (n-1) paces → lands on C-1. ✓
+    let O;
+    if(wasRight){
+      O = add(this.men.get("1S").pos, Lv, FW);
+    } else {
+      const pivot = this.men.get(this._flankPivotId);  // C-4, never moved
+      O = add(pivot.pos, Lv, -(n-1)*FW);
+    }
+
+    // Captain returns to right of front rank; 1S returns to rear rank behind capt.
+    const captPos = add(O, Lv, -FW);
+    const sgPos   = add(captPos, B, RANKD);
+    if(!wasRight){
+      const capt = this.men.get("capt");
+      const F = vec(this.heading);
+      const returnWp1 = add(capt.pos, F, 2);
+      const returnWp2 = add(captPos, F, 2);
+      capt.setPath([returnWp1, returnWp2, captPos]);
+      this._captSpeedMult = 1.5;
+    } else {
+      this.men.get("capt").setPath([captPos]);
+      this._captSpeedMult = 1;
+    }
+    this.men.get("1S").setPath([sgPos]);
+
+    // Re-form rank-and-file (fileI set at face-time; same formula for both faces).
+    for(const m of this.men.values()){
+      if((m.rank === "front" || m.rank === "rear") && m.fileI !== null){
+        let p = add(O, Lv, m.fileI * FW);
+        if(m.rank === "rear") p = add(p, B, RANKD);
+        m.setPath([p]);
+      }
+    }
+
+    // File closers return to their posts (same formula for both faces).
+    // For left-face this also returns 2S from the head of the column.
+    const post = fi => add(add(O, Lv, fi*FW), B, CLOSERD);
+    const posts = {
+      "1L": post((n1 + s3 + n - 1)/2), "2L": post((n1 - 1)/2),
+      "2S": post(n - 2), "3S": post(n1 + 1), "4S": post(n1 - 2), "5S": post(1)
+    };
+    if(this.men.has("3L")) posts["3L"] = post((n1 + n - 1)/2);
+    for(const id in posts) this.men.get(id).setPath([posts[id]]);
+    this.faceAll(this.heading);
+    this._perManAnim = !wasRight;  // left-face FRONT also uses per-man timing
+    this.state = "LINE_HALT"; return null;
+  }
+
+  // ---- Lesson IV, Art. 4: the company marching by the flank, to form it
+  // ---- on the right (or left) by file into line of battle (150-152) ------
+  odFileIntoLine(onRight){
+    if(this.state !== "FLANK_MARCH" && this.state !== "FLANK_FACED")
+      return "'On the right (left), by file into line' is given while the "+
+             "company is marching by the flank.";
+    if(onRight && this._flankRight === false)
+      return "'On the RIGHT, by file into line' requires the company to be "+
+             "marching by the RIGHT flank (after 'Company, right--FACE').";
+    if(!onRight && this._flankRight !== false)
+      return "'On the LEFT, by file into line' requires the company to be "+
+             "marching by the LEFT flank (after 'Company, left--FACE').";
+    this.clearPaths();
+    this._captSpeedMult = 1;
+    const sign = onRight ? 1 : -1;
+    const D  = vec(this.colDir);                    // column march direction
+    const Sv = vec(this.colDir + sign*Math.PI/2);   // toward the line = new fwd
+    const h  = this.colDir + sign*Math.PI/2;        // new line-of-battle heading
+    const capt = this.men.get("capt");
+    const sg   = this.men.get(onRight ? "1S" : "2S");   // head guide
+    const aOf = p => dot(p, D), sOf = p => dot(p, Sv);
+    const n = this.nFiles, n1 = this.n1, s3 = this.s3;
+
+    // The line of battle lies 6 paces beyond the rank of file closers (151).
+    let sClosers = -Infinity;
+    for(const m of this.men.values())
+      if(m.rank === "closer") sClosers = Math.max(sClosers, sOf(m.pos));
+    const sLine = sClosers + 6;
+
+    // Captain: turns toward the line and marches straight forward; he anchors
+    // the alignment (on the right of the line for the right variant, on the
+    // LEFT for the left variant, par. 152). The head guide halts behind him.
+    const captFinal = add(capt.pos, Sv, sLine - sOf(capt.pos));
+    const captA = aOf(captFinal);
+    const sgFinal = add(captFinal, Sv, -RANKD);
+
+    // Choreography jobs: sequences of {wait: w} (mark time for the time of
+    // marching w paces) or {pts: [...]} (march waypoints at the common pace).
+    const jobs = [];
+    const segLen = pts => { let L = 0;
+      for(let k = 1; k < pts.length; k++) L += dist(pts[k-1], pts[k]);
+      return L; };
+    const mkJob = (m, segs) => {
+      let L = 0;
+      for(const s of segs) L += (s.wait !== undefined) ? s.wait : segLen(s.pts);
+      jobs.push({ m: m, segs: segs, L: L });
+      return L;
+    };
+    mkJob(capt, [{pts: [capt.pos.slice(), captFinal]}]);
+    mkJob(sg,   [{pts: [sg.pos.slice(),   sgFinal]}]);
+
+    const ARC = FW * Math.PI/2;            // quarter-wheel arc length
+    const XOVER = Math.hypot(FW, 2);       // crossover diagonal length
+    const arcPts = C => {                  // arcing man's quarter-wheel around C
+      const out = [];
+      for(let j = 1; j <= 8; j++)
+        out.push(add(C,
+          vec(this.colDir - sign*Math.PI/2 + sign*(Math.PI/2)*(j/8)), FW));
+      return out;
+    };
+
+    // Pair the rank-and-file by doubled group, counted from the HEAD of the
+    // column. Within each pair the man nearer the line pivots in place and
+    // shortens step at the end; his comrade wheels around him and precedes
+    // onto the line (odd numbers on the right flank, even on the left — 152).
+    const groups = { front: new Map(), rear: new Map() };
+    for(const m of this.men.values())
+      if((m.rank === "front" || m.rank === "rear") && m.fileI !== null){
+        const k = onRight ? Math.floor(m.fileI / 2)
+                          : Math.floor((n - 1 - m.fileI) / 2);
+        if(!groups[m.rank].has(k)) groups[m.rank].set(k, []);
+        groups[m.rank].get(k).push(m);
+      }
+
+    const frontFinish = [], rearTravel = [], rearJobIdx = [];
+    for(const r of ["front", "rear"]){
+      const lineS = (r === "front") ? sLine : sLine - RANKD;
+      const ks = [...groups[r].keys()].sort((a,b)=>a-b);
+      for(const k of ks){
+        const pair = groups[r].get(k);
+        const aNear = captA + (2*k + 1) * FW;
+        if(pair.length === 2){
+          // Pivot = the member nearer the line; arcer wheels around him.
+          let P = pair[0], A = pair[1];
+          if(sOf(A.pos) > sOf(P.pos)){ const t = P; P = A; A = t; }
+          const pP0 = P.pos.slice(), pA0 = A.pos.slice();
+          const sP = sOf(pP0);
+          const C = add(pP0, D, aNear - aOf(pP0));         // wheel centre
+          const aWheelStart = add(pA0, D, aNear - aOf(pA0));
+          const aDescStart  = add(C, D, FW);               // far track
+          const aDescEnd    = add(aDescStart, Sv, (lineS - 2) - sP);
+          const aFinal      = add(add(aDescEnd, D, -FW), Sv, 2); // near slot
+          const pDescEnd    = add(C, Sv, (lineS - 2) - sP);
+          const pFinal      = add(add(pDescEnd, D, FW), Sv, 2);  // far slot
+          const aL = mkJob(A, [
+            {pts: [pA0, aWheelStart]},                 // march to the wheel
+            {pts: [aWheelStart].concat(arcPts(C))},    // quarter-wheel around P
+            {pts: [aDescStart, aDescEnd]},             // descend abreast
+            {pts: [aDescEnd, aFinal]}                  // cross in front, on line
+          ]);
+          const pL = mkJob(P, [
+            {pts: [pP0, C]},                           // march to the wheel
+            {wait: ARC},                               // pivot in place
+            {pts: [C, pDescEnd]},                      // descend abreast
+            {wait: XOVER},                             // shorten step
+            {pts: [pDescEnd, pFinal]}                  // oblique into slot
+          ]);
+          if(r === "front" && k < 2) frontFinish.push(aL, pL);
+          if(r === "rear"  && k < 1) rearTravel.push(aL, pL);
+          if(r === "rear") rearJobIdx.push(jobs.length - 2, jobs.length - 1);
+        } else {
+          // Unpaired trailing file: simple turn above the slot, straight down.
+          const m = pair[0];
+          const p0 = m.pos.slice();
+          const turnPt = add(p0, D, aNear - aOf(p0));
+          const fin = add(turnPt, Sv, lineS - sOf(p0));
+          const L = mkJob(m, [{pts: [p0, turnPt, fin]}]);
+          if(r === "front" && k < 2) frontFinish.push(L);
+          if(r === "rear"  && k < 1) rearTravel.push(L);
+          if(r === "rear") rearJobIdx.push(jobs.length - 1);
+        }
+      }
+    }
+
+    // Left variant: 1S is at the TAIL of the column; he marches on to his
+    // line-of-battle post — rear rank, covering the captain's own post on
+    // the right of the company (which the captain reoccupies afterwards).
+    if(!onRight){
+      const s1 = this.men.get("1S");
+      const p0 = s1.pos.slice();
+      const aCover = captA + (n + 1) * FW;
+      const turnPt = add(p0, D, aCover - aOf(p0));
+      const fin = add(turnPt, Sv, (sLine - RANKD) - sOf(p0));
+      mkJob(s1, [{pts: [p0, turnPt, fin]}]);
+    }
+
+    // The rear rank marks time until four front-rank men are established (151).
+    const rearStart = Math.max(...frontFinish);
+    for(const idx of rearJobIdx){
+      jobs[idx].segs.unshift({wait: rearStart});
+      jobs[idx].L += rearStart;
+    }
+    // File closers hold until the rear rank's first two files are established,
+    // so the rear-rank men stream past them before they leave their posts.
+    const closerStart = rearStart + Math.max(...rearTravel);
+
+    // Closer posts, measured from C-1's slot leftward along the new line.
+    const O_C1 = add(captFinal, D, (onRight ? 1 : n) * FW);
+    const Lline = vec(h - Math.PI/2);                 // left along the new line
+    const postFi = {
+      "1L": (n1 + s3 + n - 1)/2, "2L": (n1 - 1)/2,
+      "3S": n1 + 1, "4S": n1 - 2, "5S": 1
+    };
+    if(onRight) postFi["2S"] = n - 2;   // left variant: 2S is the head guide
+    if(this.men.has("3L")) postFi["3L"] = (n1 + n - 1)/2;
+    for(const id in postFi){
+      const m = this.men.get(id);
+      const postPos = add(add(O_C1, Lline, postFi[id]*FW), Sv, -CLOSERD);
+      const p0 = m.pos.slice();
+      const turnPt = add(p0, D, aOf(postPos) - aOf(p0));
+      mkJob(m, [{wait: closerStart}, {pts: [p0, turnPt, postPos]}]);
+    }
+
+    // Convert jobs to timed paths sharing one constant-speed global clock.
+    let W = 0;
+    for(const j of jobs) W = Math.max(W, j.L);
+    for(const j of jobs){
+      let acc = 0, cursor = j.m.pos.slice();
+      for(const s of j.segs){
+        s._start = acc; s._anchor = cursor.slice();
+        if(s.wait !== undefined){ s._len = s.wait; }
+        else {
+          s._cum = [0];
+          for(let k = 1; k < s.pts.length; k++)
+            s._cum.push(s._cum[k-1] + dist(s.pts[k-1], s.pts[k]));
+          s._len = s._cum[s._cum.length - 1];
+          cursor = s.pts[s.pts.length - 1].slice();
+        }
+        acc += s._len;
+      }
+      const total = acc, segs = j.segs, finalPos = cursor.slice();
+      const fn = t => {
+        const d = Math.min(total, Math.max(0, t * W));
+        for(const s of segs){
+          if(d <= s._start + s._len){
+            if(s.wait !== undefined) return s._anchor;
+            const dd = Math.max(0, d - s._start);
+            for(let k = 1; k < s.pts.length; k++){
+              if(dd <= s._cum[k] || k === s.pts.length - 1){
+                const seg = s._cum[k] - s._cum[k-1];
+                const tt = seg <= 1e-12 ? 0 : (dd - s._cum[k-1]) / seg;
+                return [s.pts[k-1][0] + (s.pts[k][0]-s.pts[k-1][0])*tt,
+                        s.pts[k-1][1] + (s.pts[k][1]-s.pts[k-1][1])*tt];
+              }
+            }
+          }
+        }
+        return finalPos;
+      };
+      j.m.setTimedPath(samplePath(fn, 140));
+    }
+
+    this.heading = h;
+    this.faceAll(h);
+    // Right variant: the captain and 1S already stand at their posts → line
+    // of battle. Left variant: the captain and left guide are posted at the
+    // LEFT and return by a further order of the instructor (152).
+    this.state = onRight ? "LINE_HALT" : "FILE_LINE_LEFT";
+    return null;
+  }
+
+  // Par. 152 (closing sentence): after forming on the left, the captain and
+  // the left guide return to their places in line of battle.
+  odFileIntoLinePosts(){
+    if(this.state !== "FILE_LINE_LEFT")
+      return "'Captain and left guide to your posts' follows forming ON THE "+
+             "LEFT by file into line.";
+    this.clearPaths();
+    const h = this.heading;
+    const F = vec(h), Rl = vec(h + Math.PI/2), Ll = vec(h - Math.PI/2);
+    const capt = this.men.get("capt"), sg2 = this.men.get("2S");
+    // Captain: around the FRONT of the line to the right of the front rank.
+    let rightMan = null, leftMan = null;
+    for(const m of this.men.values())
+      if(m.rank === "front" && m.fileI !== null){
+        if(!rightMan || dot(m.pos, Rl) > dot(rightMan.pos, Rl)) rightMan = m;
+        if(!leftMan  || dot(m.pos, Ll) > dot(leftMan.pos, Ll))  leftMan  = m;
+      }
+    const captPost = add(rightMan.pos, Rl, FW);
+    const wp1 = add(capt.pos, F, 2);
+    const wp2 = add(captPost, F, 2);
+    capt.setPath([wp1, wp2, captPost]);
+    this._captSpeedMult = 1.5;
+    // 2S: behind the line to his file-closer post, second file from the left.
+    const sgPost = add(add(leftMan.pos, Rl, FW), F, -CLOSERD);
+    const sgWp = add(sg2.pos, F, -(CLOSERD - RANKD + 1));
+    sg2.setPath([sgWp, sgPost]);
+    this.state = "LINE_HALT"; return null;
+  }
+
+  // ---- Lesson IV, Art. 5: the company marching by the flank, to form it
+  // ---- by company, or by platoon, into line, without halting (155-169) ---
+  odFlankIntoLine(byPlatoon){
+    if(this.state !== "FLANK_MARCH" && this.state !== "FLANK_FACED")
+      return "'By company (platoon), into line' is given while the company "+
+             "is marching by the flank.";
+    this.clearPaths();
+    this._captSpeedMult = 1;
+    const onRight = (this._flankRight !== false);
+    const q = onRight ? 1 : -1;
+    const D   = vec(this.colDir);                    // march direction (kept)
+    const Lat = vec(this.colDir + q*Math.PI/2);      // lane-side lateral
+    const n = this.nFiles, n1 = this.n1, n2 = n - n1;
+    const DQ = 1.8;                                  // double-quick speed
+    const aOf = p => dot(p, D);
+    const anchor = this.men.get(onRight ? "1S" : "2S");  // head guide anchors
+    const p0A = anchor.pos.slice();
+
+    // Lateral slot (in FW, negative = away from the lanes) and line offsets.
+    // Company: one line, files ordered from the anchor's track outward.
+    // Platoon: leading platoon's line at the anchor; trailing platoon's line
+    // one platoon-front behind (wheeling distance); each covers the other.
+    const leadPlt = onRight ? 1 : 2;
+    const nLead = leadPlt === 1 ? n1 : n2;
+    const lineOff = p => (!byPlatoon || p === leadPlt) ? 0 : -(nLead + 2) * FW;
+    const latIdx = i => {
+      if(!byPlatoon) return onRight ? (i + 1) : (n - i);
+      const p = (i < n1) ? 1 : 2;
+      return onRight ? (i - (p === 1 ? 0 : n1) + 1)
+                     : ((p === 1 ? n1 - 1 : n - 1) - i + 1);
+    };
+    const pltOf = i => (i < n1) ? 1 : 2;
+
+    // Iterate the anchor's advance A until every mover can reach his slot at
+    // double-quick within the time the anchor takes to march A paces.
+    const slotPos = (A, da, s) =>
+      add(add(p0A, D, A + da), Lat, -s * FW);
+    // collect movers: [man, daOff (line offset - rank depth - chief lead), s]
+    const movers = [];
+    for(const m of this.men.values()){
+      if(m.id === anchor.id) continue;
+      if((m.rank === "front" || m.rank === "rear") && m.fileI !== null){
+        const i = m.fileI, p = pltOf(i);
+        const da = (byPlatoon ? lineOff(p) : 0) - (m.rank === "rear" ? RANKD : 0);
+        movers.push([m, da, latIdx(i)]);
+      }
+    }
+    // Guides, chiefs, and closers.
+    if(byPlatoon){
+      // One guide per platoon on the outer flank (166-168): 1S serves the
+      // 1st platoon, 2S the 2d (167). The anchor is already handled; the
+      // other sergeant crosses to his platoon's flank.
+      const g1 = this.men.get("1S"), g2 = this.men.get("2S");
+      const nP = { 1: n1, 2: n2 };
+      const guideOf = { 1: g1, 2: g2 };
+      for(const p of [1, 2]){
+        const g = guideOf[p];
+        if(g.id === anchor.id){
+          // the anchor crosses to the flank too (handled as a mover so the
+          // whole formation shares one clock; a virtual point anchors A)
+          movers.push([g, lineOff(p), nP[p] + 1]);
+        } else {
+          movers.push([g, lineOff(p), nP[p] + 1]);
+        }
+      }
+      // Chiefs before the centres of their platoons (165).
+      movers.push([this.men.get("capt"), lineOff(1) + 2, (n1 + 1)/2]);
+      movers.push([this.men.get("1L"),  lineOff(2) + 2, (n2 + 1)/2]);
+      // File closers follow the platoons to which they are attached (169).
+      // 1L is chief of the 2d platoon here, so his usual closer post stays
+      // vacant; the remaining closers follow their own platoons (169).
+      const posts = { "2L": [1, (n1 - 1)/2 + 1], "4S": [1, n1 - 1],
+                      "5S": [1, 2], "3S": [2, 2] };
+      if(this.men.has("3L")) posts["3L"] = [2, (n2 - 1)/2 + 1];
+      for(const id in posts){
+        const [p, s] = posts[id];
+        movers.push([this.men.get(id), lineOff(p) - CLOSERD, s]);
+      }
+    } else {
+      // Company into line: the other sergeant runs to the far flank as guide
+      // (161-162); the captain posts two paces before the centre (160);
+      // the file closers take their posts behind the rear rank.
+      const other = this.men.get(onRight ? "2S" : "1S");
+      movers.push([other, 0, n + 1]);
+      movers.push([this.men.get("capt"), 2, (n + 1)/2]);
+      const postFi = { "1L": (n1 + this.s3 + n - 1)/2, "2L": (n1 - 1)/2,
+                       "3S": n1 + 1, "4S": n1 - 2, "5S": 1 };
+      if(this.men.has("3L")) postFi["3L"] = (n1 + n - 1)/2;
+      for(const id in postFi)
+        movers.push([this.men.get(id), -CLOSERD, postFi[id] + 1]);
+    }
+
+    let A = 8;
+    for(let it = 0; it < 14; it++){
+      let need = A;
+      for(const [m, da, s] of movers)
+        need = Math.max(need, dist(m.pos, slotPos(A, da, s)) / DQ);
+      A = need;
+    }
+    A += 0.5;   // small margin
+
+    // Anchor: straight ahead at the common step for the full duration.
+    const jobsW = A;   // time budget (in anchor-paces)
+    const mkTimed = (m, segs) => {
+      // segs: [{pts:[..], speed}] — time cost of a segment = length/speed
+      let acc = 0;
+      for(const s of segs){
+        s._cum = [0];
+        for(let k = 1; k < s.pts.length; k++)
+          s._cum.push(s._cum[k-1] + dist(s.pts[k-1], s.pts[k]));
+        s._len = s._cum[s._cum.length - 1] / s.speed;
+        s._start = acc; acc += s._len;
+      }
+      const total = acc, fin = segs[segs.length-1].pts.slice(-1)[0];
+      const fn = t => {
+        const tt = Math.min(total, Math.max(0, t * jobsW));
+        for(const s of segs){
+          if(tt <= s._start + s._len || s === segs[segs.length-1]){
+            const dd = Math.min(s._cum[s._cum.length-1],
+                                Math.max(0, (tt - s._start) * s.speed));
+            for(let k = 1; k < s.pts.length; k++){
+              if(dd <= s._cum[k] || k === s.pts.length - 1){
+                const seg = s._cum[k] - s._cum[k-1];
+                const u = seg <= 1e-12 ? 0 : (dd - s._cum[k-1]) / seg;
+                return [s.pts[k-1][0] + (s.pts[k][0]-s.pts[k-1][0])*u,
+                        s.pts[k-1][1] + (s.pts[k][1]-s.pts[k-1][1])*u];
+              }
+            }
+          }
+        }
+        return fin;
+      };
+      m.setTimedPath(samplePath(fn, 120));
+    };
+
+    mkTimed(anchor, [{pts: [p0A, add(p0A, D, A)], speed: 1}]);
+
+    // Each mover: double-quick straight to the EARLIEST intercept with his
+    // slot on the moving line, then fall into the common step (156-158).
+    for(const [m, da, s] of movers){
+      const fin = slotPos(A, da, s);
+      const p0 = m.pos.slice();
+      // slot at time-fraction τ: fin - D·A·(1-τ). Solve |u + τ·v| = DQ·A·τ
+      const u = sub(add(fin, D, -A), p0), v = [D[0]*A, D[1]*A];
+      const k2 = (DQ*A)*(DQ*A);
+      const a2 = dot(v, v) - k2, b2 = 2*dot(u, v), c2 = dot(u, u);
+      let tau;
+      if(c2 < 1e-12) tau = 0;
+      else {
+        const disc = Math.max(0, b2*b2 - 4*a2*c2);
+        const r1 = (-b2 + Math.sqrt(disc)) / (2*a2);
+        const r2 = (-b2 - Math.sqrt(disc)) / (2*a2);
+        tau = Math.max(r1, r2) > 0 ? Math.min(1, Math.max(1e-4,
+              (r1 > 0 && r2 > 0) ? Math.min(r1, r2) : Math.max(r1, r2))) : 1;
+      }
+      const J = add(add(fin, D, -A * (1 - tau)), [0,0], 0);
+      const segs = [];
+      if(dist(p0, J) > 1e-9) segs.push({pts: [p0, J], speed: DQ});
+      if(dist(J, fin) > 1e-9) segs.push({pts: [segs.length ? J : p0, fin], speed: 1});
+      if(!segs.length) segs.push({pts: [p0, fin], speed: 1});
+      mkTimed(m, segs);
+    }
+
+    this.heading = this.colDir;
+    this.faceAll(this.colDir);
+    if(byPlatoon){
+      // Column by platoon on the march: chiefs and ranks match Lesson V.
+      this.men.get("capt").rank = "chief";
+      this.men.get("1L").rank = "chief";
+      this.men.get("1S").rank = "front";
+      this.state = "COL_MARCH";
+    } else {
+      this.state = "LINE_MARCH";
+    }
+    return null;
+  }
+
+  // ---------------- Lesson V: column by platoon ----------------
+  odBreakPrep(){
+    if(this.state !== "LINE_HALT")
+      return "'By platoon, right (left) wheel' is given from the halted line of battle.";
+    this.clearPaths();
+    const F = this.F();
+    // Chiefs of platoon post 2 paces in front of the centre of their platoon
+    for(const [id, p] of [["capt",1],["1L",2]]){
+      const ms = this.platoonMembers(p).filter(m => m.rank === "front");
+      const c = centroid(ms.map(m => m.pos));
+      const chief = this.men.get(id);
+      chief.setPath([add(c, F, 2)]);
+      chief.rank = "chief";
+    }
+    // Covering sergeant (1S) steps forward into the captain's vacated front-rank spot
+    const s = this.men.get("1S");
+    s.setPath([this.men.get("capt").pos.slice()]);
+    s.rank = "front";
+    this.state = "COL_READY"; return null;
+  }
+  _breakGeometry(left){
+    // Shared geometry for breaking into column by platoon (176-187).
+    const turn = left ? -Math.PI/2 : Math.PI/2;
+    const side = vec(this.heading + turn);          // wheel side of the line
+    const perpDir = vec(this.heading + 2*turn + Math.PI); // pivot -> flank
+    const g = { turn, side, perpDir, pivots: {}, rMax: {}, stop: {},
+                nP: { 1: this.n1, 2: this.nFiles - this.n1 } };
+    for(const p of [1,2]){
+      let pivotMan = null; let bestD = -Infinity;
+      for(const m of this.platoonMembers(p))
+        if(m.rank === "front" && m.id !== "1S"){
+          const d = dot(m.pos, side);
+          if(d > bestD){ bestD = d; pivotMan = m; }
+        }
+      g.pivots[p] = pivotMan.pos.slice();
+      let rMax = 0;
+      for(const m of this.platoonMembers(p))
+        rMax = Math.max(rMax, dist(m.pos, g.pivots[p]));
+      g.rMax[p] = rMax;
+      g.stop[p] = Math.max(0, Math.PI/2 - 3 / rMax);   // halt 3 paces short
+    }
+    return g;
+  }
+  odBreakMarch(left){
+    if(this.state !== "COL_READY")
+      return "'MARCH' here follows 'By platoon, right (left) wheel.'";
+    this.clearPaths();
+    const g = this._breakGeometry(left);
+    const sgn = Math.sign(g.turn);
+    const capt = this.men.get("capt"), lt = this.men.get("1L");
+    const s1 = this.men.get("1S"), s2 = this.men.get("2S");
+    const chiefs = { 1: capt, 2: lt };
+    const finals = new Map(), guides = {};
+    for(const p of [1,2]){
+      const P = g.pivots[p];
+      guides[p] = add(P, g.perpDir, g.nP[p] * FW);   // flank rest point
+      for(const m of this.platoonMembers(p))
+        finals.set(m.id, rotAbout(m.pos, P, g.turn));
+    }
+    // The chiefs run by the shortest line a little beyond the point at which
+    // the marching flank will rest, face the late rear, and mark the
+    // perpendicular with the pivot man who has faced (178/180).
+    for(const p of [1,2]){
+      const marker = add(g.pivots[p], g.perpDir, (g.nP[p] + 2) * FW);
+      chiefs[p].setTimedPath(samplePath(t => {
+        const p0 = chiefs[p]._bm0 || (chiefs[p]._bm0 = chiefs[p].pos.slice());
+        const s = Math.min(1, t / 0.5);
+        return [p0[0] + (marker[0]-p0[0])*s, p0[1] + (marker[1]-p0[1])*s];
+      }, 60));
+      finals.set(chiefs[p].id, marker);
+    }
+    // Rank-and-file, closers: wheel on the fixed pivot, halting three paces
+    // short of the perpendicular at the chiefs' 'Platoon--HALT' (178-179).
+    // The pivot man faces to the wheel side and stands fast (178). 1S stands
+    // fast, then moves at the halt to the flank rest point of the 1st
+    // platoon, passing by the front rank; 2S in like manner for the 2d (179).
+    for(const p of [1,2]){
+      const P = g.pivots[p], stop = g.stop[p] * sgn;
+      for(const m of this.platoonMembers(p)){
+        if(m === chiefs[1] || m === chiefs[2] || m.id === "1S" || m.id === "2S")
+          continue;
+        if(dist(m.pos, P) <= 1e-9) continue;     // the pivot man stands fast
+        const p0 = m.pos.slice();
+        m.setTimedPath(samplePath(t =>
+          rotAbout(p0, P, stop * Math.min(1, t / 0.75)), 60));
+      }
+    }
+    {
+      // 1S: stand fast during the wheel, then along the front to plt 1's
+      // flank rest point.
+      const p0 = s1.pos.slice();
+      const P1 = g.pivots[1];
+      const out1 = add(P1, g.side, FW);
+      const wpB = add(out1, g.perpDir, g.nP[1] * FW);
+      const G1 = guides[1];
+      const legs = [p0, out1, wpB, G1];
+      const cum = [0];
+      for(let k=1;k<legs.length;k++) cum.push(cum[k-1]+dist(legs[k-1],legs[k]));
+      const L = cum[cum.length-1];
+      // Right wheel: 1S stands fast until the halt (179). Left wheel: he has
+      // the whole company front to traverse, so he steps off at once.
+      const tStart = left ? 0 : 0.75;
+      s1.setTimedPath(samplePath(t => {
+        if(t <= tStart || L <= 1e-9) return p0;
+        const d = L * (t - tStart) / (1 - tStart);
+        for(let k=1;k<legs.length;k++)
+          if(d <= cum[k] || k === legs.length-1){
+            const seg = cum[k]-cum[k-1], u = seg<=1e-12?0:Math.min(1,(d-cum[k-1])/seg);
+            return [legs[k-1][0]+(legs[k][0]-legs[k-1][0])*u,
+                    legs[k-1][1]+(legs[k][1]-legs[k-1][1])*u];
+          }
+        return G1;
+      }, 60));
+      finals.set("1S", G1);
+    }
+    {
+      // 2S: wheels with his platoon (a file closer), then moves at the halt
+      // to plt 2's flank rest point.
+      const p0 = s2.pos.slice();
+      const P2 = g.pivots[2], stop2 = g.stop[2] * sgn;
+      const G2 = guides[2];
+      const wheeled = rotAbout(p0, P2, stop2);
+      s2.setTimedPath(samplePath(t => {
+        if(t <= 0.75) return rotAbout(p0, P2, stop2 * (t / 0.75));
+        const u = (t - 0.75) / 0.25;
+        return [wheeled[0] + (G2[0]-wheeled[0])*u, wheeled[1] + (G2[1]-wheeled[1])*u];
+      }, 60));
+      finals.set("2S", G2);
+    }
+    this.colDir = this.heading + g.turn;
+    this.faceAll(this.colDir);
+    // Chiefs face the late rear, toward their guides (178/180).
+    capt.facing = this.heading + Math.PI;
+    lt.facing = this.heading + Math.PI;
+    this._break = { left: left, finals: finals, guides: guides,
+                    pivots: g.pivots, colDir: this.colDir };
+    this.state = "BREAK_HALTED"; return null;
+  }
+  odBreakDress(){
+    if(this.state !== "BREAK_HALTED")
+      return "'Left (Right)--DRESS' here follows the platoons' halt three "+
+             "paces short of the perpendicular.";
+    this.clearPaths();
+    const b = this._break;
+    for(const p of [1,2])
+      for(const m of this.platoonMembers(p)){
+        if(m.id === "capt" || m.id === "1L" || m.id === "1S" || m.id === "2S")
+          continue;
+        const tgt = b.finals.get(m.id);
+        if(tgt && dist(m.pos, tgt) > 1e-9) m.setPath([tgt]);
+      }
+    this.state = "BREAK_DRESSED"; return null;
+  }
+  odBreakFront(){
+    if(this.state !== "BREAK_DRESSED")
+      return "'FRONT' here follows the dress of the platoons on their guides.";
+    this.clearPaths();
+    const D = vec(this.colDir);
+    for(const [id, p] of [["capt",1],["1L",2]]){
+      const ms = this.platoonMembers(p).filter(
+        m => m.rank === "front" && m.id !== "1S");
+      const cen = centroid(ms.map(m => m.pos));
+      this.men.get(id).setPath([add(cen, D, 2)]);
+    }
+    this.faceAll(this.colDir);
+    this.state = "COL_HALT"; return null;
+  }
+  // 188-194: breaking by platoon and moving the column forward without a
+  // halt ('3. Forward. 4. MARCH. 5. Guide left'). Also given from the march
+  // in line (194).
+  odBreakForward(left){
+    const fromMarch = (this.state === "LINE_MARCH");
+    if(this.state !== "COL_READY" && !fromMarch)
+      return "'MARCH -- and forward' follows 'By platoon, right (left) "+
+             "wheel' (after the caution), or is given from the march in "+
+             "line (par. 194).";
+    this.clearPaths();
+    const capt = this.men.get("capt"), lt = this.men.get("1L");
+    const s1 = this.men.get("1S");
+    if(fromMarch){
+      // Par. 189 applied on the move: the chiefs run before their platoons
+      // and the covering sergeant replaces the captain, during an initial
+      // phase in which the company marks time.
+      capt.rank = "chief"; lt.rank = "chief"; s1.rank = "front";
+    }
+    const F = this.F();
+    const prepT = fromMarch ? 0.18 : 0;
+    const wheelEnd = prepT + (1 - prepT) * 0.55;
+    const g = this._breakGeometry(left);
+    const sgn = Math.sign(g.turn);
+    const colDir = this.heading + g.turn;
+    const Dv = vec(colDir);
+    const chiefs = { 1: capt, 2: lt };
+    // prep targets (for the from-march case)
+    const prepTgt = new Map();
+    if(fromMarch){
+      for(const p of [1,2]){
+        const ms = this.platoonMembers(p).filter(
+          m => m.rank === "front" && m.id !== "1S" && m.id !== "capt" && m.id !== "1L");
+        prepTgt.set(chiefs[p].id, add(centroid(ms.map(m => m.pos)), F, 2));
+      }
+      prepTgt.set("1S", capt.pos.slice());
+    }
+    const guides = {};
+    for(const p of [1,2])
+      guides[p] = add(add(g.pivots[p], g.perpDir, g.nP[p] * FW),
+                      Dv, MARCH_PACES);
+    for(const m of this.men.values()){
+      const p0 = m.pos.slice();
+      const start = prepTgt.has(m.id) ? prepTgt.get(m.id) : p0;
+      const p = m.platoon;
+      const P = g.pivots[p] || g.pivots[1];
+      const full = rotAbout(start, P, g.turn);
+      const isGuide = (m.id === "1S" || m.id === "2S");
+      const guidePost = isGuide ? guides[m.id === "1S" ? 1 : 2] : null;
+      const fn = t => {
+        if(t <= prepT){
+          const u = prepT <= 1e-9 ? 1 : t / prepT;
+          return [p0[0] + (start[0]-p0[0])*u, p0[1] + (start[1]-p0[1])*u];
+        }
+        if(t <= wheelEnd){
+          const w = (t - prepT) / (wheelEnd - prepT);
+          return rotAbout(start, P, g.turn * w);
+        }
+        const u = (t - wheelEnd) / (1 - wheelEnd);
+        if(isGuide){
+          // Guide left (right): the sergeants move rapidly to the flanks of
+          // their platoons as the column steps off (191).
+          return [full[0] + (guidePost[0]-full[0])*u,
+                  full[1] + (guidePost[1]-full[1])*u];
+        }
+        return add(full, Dv, MARCH_PACES * u);
+      };
+      m.setTimedPath(samplePath(fn, 90));
+    }
+    this.colDir = colDir;
+    this.faceAll(colDir);
+    this.state = "COL_MARCH"; return null;
+  }
+  odColMarch(){
+    if(this.state !== "COL_HALT" && this.state !== "COL_MARCH")
+      return "The company is not formed in column by platoon.";
+    this.clearPaths();
+    const D = vec(this.colDir);
+    for(const m of this.men.values()) m.setPath([add(m.pos, D, MARCH_PACES)]);
+    this.state = "COL_MARCH"; return null;
+  }
+  odColChange(left){
+    if(this.state !== "COL_MARCH" && this.state !== "COL_HALT")
+      return "The company is not marching in column by platoon.";
+    this.clearPaths();
+    const D = vec(this.colDir);
+    const turn = left ? -Math.PI/2 : Math.PI/2;
+    const inner = vec(this.colDir + turn);
+    const nd = this.colDir + turn, NDv = vec(nd);
+    const cen = {};
+    for(const p of [1,2]) cen[p] = centroid(this.platoonMembers(p).map(m => m.pos));
+    const lead = dot(cen[1], D) > dot(cen[2], D) ? 1 : 2;
+    const trail = lead === 1 ? 2 : 1;
+    const pivotLead = this.extremeFrontMan(lead, inner);
+    const PIVR = 1.5;
+    const Cw = add(pivotLead.pos, inner, PIVR);
+    const pivotTrail = this.extremeFrontMan(trail, inner);
+    const gap = dot(sub(pivotLead.pos, pivotTrail.pos), D);
+    let wmax = 1;
+    for(const m of this.platoonMembers(lead)) wmax = Math.max(wmax, dist(m.pos, Cw));
+    const arc = wmax * Math.PI/2;
+    const r = arc / (arc + gap);
+    for(const m of this.platoonMembers(lead)){
+      const p0 = m.pos.slice();
+      const fn = t => {
+        if(t <= r) return rotAbout(p0, Cw, turn * (t/r));
+        const q = rotAbout(p0, Cw, turn);
+        return add(q, NDv, gap * (t - r)/(1 - r));
+      };
+      m.setTimedPath(samplePath(fn, 48));
+    }
+    // the trailing platoon slackens: it waits until the leading platoon has
+    // nearly cleared the wheeling ground before closing on it
+    const w = 0.7 * r;
+    const q0 = w + (1 - w) * gap / (gap + arc);
+    for(const m of this.platoonMembers(trail)){
+      const p0 = m.pos.slice();
+      const fn = t => {
+        if(t <= w) return p0;
+        if(t <= q0) return add(p0, D, gap * (t - w)/(q0 - w));
+        const q = add(p0, D, gap);
+        return rotAbout(q, Cw, turn * (t - q0)/(1 - q0));
+      };
+      m.setTimedPath(samplePath(fn, 48));
+    }
+    this.colDir = nd;
+    this.faceAll(nd);
+    this.state = "COL_MARCH"; return null;
+  }
+  odColHalt(){
+    if(this.state !== "COL_MARCH") return "The column is not marching.";
+    this.clearPaths();
+    this.state = "COL_HALT"; return null;
+  }
+
+  // ------ Lesson V, Art. 5: form to the left (or right) into line ------
+  // Fix 5: platoons wheel the full 90° — the HALT command (next step) stops
+  // them.  The "three paces from the line" note in par. 245 means the HALT
+  // order is given when the marching flank is three paces away, not that the
+  // animation stops short.
+  //
+  // Fix 6: when the trailing platoon must pass behind the leading platoon, it
+  // waits for the lead to complete its wheel and advance clear, then marches
+  // straight forward (no side-step), and only ONE platoon is moving at a time.
+  odFormLineWheel(left){
+    if(this.state !== "COL_HALT" && this.state !== "COL_MARCH")
+      return "'Left (right) into line, wheel' is given with the column by "+
+             "platoon at a halt or on the march.";
+    // If marching, finish movement first
+    if(this.state === "COL_MARCH") this.finish();
+    this.clearPaths();
+    const sign = left ? -1 : 1;
+    const turn = sign * Math.PI/2;
+    const side = vec(this.colDir + turn);    // wheel side
+    const h = this.colDir + turn;            // new line-of-battle heading
+    const D = vec(this.colDir);              // current march direction
+    const F = vec(h);                        // new forward direction
+    const Rv = vec(h + Math.PI/2);           // rightward in new line
+
+    // Compute pivot points.
+    // The pivot is the flank on the WHEEL SIDE (furthest in the side direction).
+    // For left-into-line after a right wheel: side=[0,-1] (northward), so C-2 and C-4
+    // (the left/north flanks of each platoon) are correctly selected as pivots.
+    // Exclude 1S who may be in plt1's front rank at the extra-right spot after odBreakPrep.
+    const pivots = {}, finals = new Map();
+    let plt1PivotId = null;
+    for(const p of [1,2]){
+      let pivotMan = null; let bestD = -Infinity;
+      for(const m of this.platoonMembers(p))
+        if(m.rank === "front" && m.id !== "1S"){
+          const d = dot(m.pos, side);
+          if(d > bestD){ bestD = d; pivotMan = m; }
+        }
+      pivots[p] = pivotMan.pos.slice();
+      if(p === 1) plt1PivotId = pivotMan.id;
+      // Full 90° final positions (used for dress step and file-closer targets)
+      for(const m of this.platoonMembers(p))
+        finals.set(m.id, rotAbout(m.pos, pivots[p], turn));
+    }
+
+    // Compute the stop-short angle for each platoon: stop when the marching flank
+    // is 3 paces from the final line (par. 245). The remaining angle is covered by
+    // the DRESS step after Platoon—HALT.
+    // stopAngle[p] = π/2 - 3/rMax, where rMax is the outermost man's distance from pivot.
+    const STOP_PACES = 3;
+    const stopAngle = {};
+    for(const p of [1,2]){
+      let rMax = 0;
+      for(const m of this.platoonMembers(p))
+        rMax = Math.max(rMax, dist(m.pos, pivots[p]));
+      stopAngle[p] = Math.max(0, Math.PI/2 - STOP_PACES / Math.max(rMax, 1));
+    }
+
+    // Determine which platoon is leading (further along colDir)
+    const cen = {};
+    for(const p of [1,2]) cen[p] = centroid(this.platoonMembers(p).map(m => m.pos));
+    const lead = dot(cen[1], D) > dot(cen[2], D) ? 1 : 2;
+    const trail = lead === 1 ? 2 : 1;
+
+    // The 1st platoon must always rest on the RIGHT of the line of battle.
+    // Adjust the trailing platoon's finals to sit correctly beside the leading platoon.
+    const frIds = p => this.platoonMembers(p).filter(m => m.rank === "front").map(m => m.id);
+    const sLead  = frIds(lead).map(i => dot(finals.get(i), Rv));
+    const dLead  = Math.min(...frIds(lead).map(i => dot(finals.get(i), F)));
+    const sTrail = frIds(trail).map(i => dot(finals.get(i), Rv));
+    const dTrail = Math.min(...frIds(trail).map(i => dot(finals.get(i), F)));
+    const trailOnRight = (trail === 1);
+    const shiftR = trailOnRight
+      ? (Math.max(...sLead) + FW) - Math.min(...sTrail)
+      : (Math.min(...sLead) - FW) - Math.max(...sTrail);
+    const shiftF = dLead - dTrail;
+    for(const m of this.platoonMembers(trail)){
+      let qq = finals.get(m.id);
+      qq = add(qq, F, shiftF);
+      finals.set(m.id, add(qq, Rv, shiftR));
+    }
+
+    // Does the trailing platoon need to march PAST the leading platoon?
+    // This happens when right-in-front + right-into-line, or left-in-front +
+    // left-into-line (the trailing platoon's wheel ground is ahead of/beyond the
+    // leading platoon's wheel ground).
+    const trailPivotMan = this.extremeFrontMan(trail, side);
+    const trailPivotFinal = finals.get(trailPivotMan.id);
+    // How far does the trail pivot need to travel forward (along D) vs its current pos?
+    const forwardTravel = dot(sub(trailPivotFinal, trailPivotMan.pos), D);
+
+    // Reconstruct pre-wheel start positions for the trailing platoon
+    // (reverse-rotate their finals by turn to get the spot they'd wheel from)
+    const preW = new Map();
+    for(const m of this.platoonMembers(trail)){
+      preW.set(m.id, rotAbout(finals.get(m.id), trailPivotFinal, -turn));
+    }
+
+    // Variables set in the march-past branch, used later for fullFinals override.
+    let clearAdv = 0, trailAlignAdv = 0;
+
+    // Both platoons wheel simultaneously, stopping stopAngle short of the line.
+    // (The march-past case where the trailing platoon needs to travel forward
+    // beyond the leading platoon is handled as a special case below.)
+    if(forwardTravel > 1.5){
+      // ---- Trailing platoon marches past and wheels beyond the leading platoon ----
+      // Lead:  [0.00..0.20] wheel at 2x speed. [0.20..0.55] advance in F. [0.55..1.0] hold.
+      // Trail: [0.00..0.60] march to pre-wheel ground. [0.60..0.725] wheel at 2x speed.
+      //        [0.725..1.0] advance in F to align with lead.
+
+      const signedStopL  = Math.sign(turn) * stopAngle[lead];
+      const signedStopTr = Math.sign(turn) * stopAngle[trail];
+
+      let leadMinF_afterWheel = Infinity;
+      for(const m of this.platoonMembers(lead))
+        leadMinF_afterWheel = Math.min(leadMinF_afterWheel,
+          dot(rotAbout(m.pos, pivots[lead], turn), F));
+      let trailMaxF_preWheel = -Infinity;
+      for(const [, pw] of preW)
+        trailMaxF_preWheel = Math.max(trailMaxF_preWheel, dot(pw, F));
+      const clearAdv = Math.max(0, trailMaxF_preWheel + 2.0 - leadMinF_afterWheel) + 1.0;
+
+      let leadFrontF = -Infinity;
+      for(const m of this.platoonMembers(lead))
+        if(m.rank === "front")
+          leadFrontF = Math.max(leadFrontF,
+            dot(rotAbout(m.pos, pivots[lead], turn), F) + clearAdv);
+      let trailFrontF = -Infinity;
+      for(const m of this.platoonMembers(trail))
+        if(m.rank === "front"){
+          const pw = preW.get(m.id);
+          trailFrontF = Math.max(trailFrontF,
+            dot(rotAbout(pw, trailPivotFinal, turn), F));
+        }
+      const trailAlignAdv = leadFrontF - trailFrontF;
+
+      // Lead: wheel [0..0.20] at 2x speed, advance in F [0.20..0.55], hold [0.55..1.0]
+      for(const m of this.platoonMembers(lead)){
+        const p0 = m.pos.slice();
+        const afterWheel   = rotAbout(p0, pivots[lead], signedStopL);
+        const stoppedFinal = add(afterWheel, F, clearAdv);
+        const fn = t => {
+          if(t <= 0.20) return rotAbout(p0, pivots[lead], signedStopL * (t / 0.20));
+          if(t <= 0.55){
+            const s = (t - 0.20) / 0.35;
+            return [afterWheel[0] + (stoppedFinal[0] - afterWheel[0]) * s,
+                    afterWheel[1] + (stoppedFinal[1] - afterWheel[1]) * s];
+          }
+          return stoppedFinal;
+        };
+        finals.set(m.id, stoppedFinal);
+        m.setTimedPath(samplePath(fn, 60));
+      }
+
+      // Trail: march [0..0.60], wheel [0.60..0.725] at 2x speed, align in F [0.725..1.0]
+      for(const m of this.platoonMembers(trail)){
+        const p0 = m.pos.slice();
+        const pw = preW.get(m.id);
+        const afterTrailWheel = rotAbout(pw, trailPivotFinal, signedStopTr);
+        const stoppedFinal    = add(afterTrailWheel, F, trailAlignAdv);
+        const fn = t => {
+          if(t <= 0.60){
+            const s = t / 0.60;
+            return [p0[0] + (pw[0] - p0[0]) * s, p0[1] + (pw[1] - p0[1]) * s];
+          }
+          if(t <= 0.725){
+            const wt = (t - 0.60) / 0.125;
+            return rotAbout(pw, trailPivotFinal, signedStopTr * wt);
+          }
+          const s = (t - 0.725) / 0.275;
+          return [afterTrailWheel[0] + (stoppedFinal[0] - afterTrailWheel[0]) * s,
+                  afterTrailWheel[1] + (stoppedFinal[1] - afterTrailWheel[1]) * s];
+        };
+        finals.set(m.id, stoppedFinal);
+        m.setTimedPath(samplePath(fn, 80));
+      }
+
+    } else {
+      // ---- Both platoons wheel simultaneously in place (243-245) ----
+      // The guides (1S, 2S) STAND FAST, marking the line of battle; the
+      // pivot man of each platoon has faced and stands against his guide
+      // (244). Signed stop angle: the chiefs halt the platoons three paces
+      // short of the line (245).
+      const signedStop = p => Math.sign(turn) * stopAngle[p];
+      for(const p of [1,2]){
+        for(const m of this.platoonMembers(p)){
+          if(m.id === "1S" || m.id === "2S") continue;   // guides stand fast
+          const p0 = m.pos.slice(), c = pivots[p], sa = signedStop(p);
+          if(dist(p0, c) > 1e-9){
+            const final = rotAbout(p0, c, sa);
+            finals.set(m.id, final);
+            m.setTimedPath(samplePath(t => rotAbout(p0, c, sa * t), 40));
+          }
+        }
+      }
+    }
+
+    // Compute the true full-90° finals for the dress step and captain/1L targets.
+    // fullFinals = pure 90° rotation for every man (the on-line positions).
+    // finals     = stopped-short positions (set per-man in the wheel loops above).
+    // Exception: in the march-past case the leading platoon advanced beyond pure rotation;
+    // their fullFinals should use the advanced positions stored in finals.
+    const fullFinals = new Map();
+    for(const p of [1,2])
+      for(const m of this.platoonMembers(p))
+        fullFinals.set(m.id, rotAbout(m.pos, pivots[p], turn));
+    // Override fullFinals for march-past case:
+    // Lead: full 90° wheel + clearance advance. Trail: full 90° wheel + alignment advance.
+    if(forwardTravel > 1.5){
+      for(const m of this.platoonMembers(lead)){
+        const full90 = rotAbout(m.pos, pivots[lead], turn);
+        fullFinals.set(m.id, add(full90, F, clearAdv));
+      }
+      for(const m of this.platoonMembers(trail)){
+        const pw = preW.get(m.id);
+        const full90 = rotAbout(pw, trailPivotFinal, turn);
+        fullFinals.set(m.id, add(full90, F, trailAlignAdv));
+      }
+    }
+
+    if(forwardTravel <= 1.5){
+      // Guides stood fast: their finals are simply where they stand.
+      for(const gid of ["1S","2S"]){
+        const gm = this.men.get(gid);
+        finals.set(gid, gm.pos.slice());
+        fullFinals.set(gid, gm.pos.slice());
+      }
+    }
+    this._form = { finals: finals, fullFinals: fullFinals, heading: h, marchPast: forwardTravel > 1.5, plt1PivotId: plt1PivotId, trailPlt: trail };
+    this.heading = h;
+    this.faceAll(h);
+    this.state = "FORM_WHEELED"; return null;
+  }
+  odFormHalt(){
+    if(this.state !== "FORM_WHEELED")
+      return "'Platoon--HALT' is given while the platoons are wheeling into "+
+             "line (after 'Left/right into line, wheel--MARCH').";
+    this.clearPaths();
+    const f = this._form, h = f.heading;
+    const Rv = vec(h + Math.PI/2), Lv = vec(h - Math.PI/2), Bv = vec(h + Math.PI);
+    // Platoons are now fully on the line (Fix 5: full-wheel animation).
+    // Chief of the 2d platoon returns to the file closers, passing around
+    // the LEFT of his subdivision (par. 246).
+    const lt = this.men.get("1L");
+    const body2 = this.platoonMembers(2).filter(m =>
+      m.rank === "front" || m.rank === "rear");
+    let maxL = -Infinity, minD = Infinity, maxD = -Infinity;
+    for(const m of body2){
+      maxL = Math.max(maxL, dot(m.pos, Lv));
+      minD = Math.min(minD, dot(m.pos, Bv));
+      maxD = Math.max(maxD, dot(m.pos, Bv));
+    }
+    const ltD = dot(lt.pos, Bv);
+    const cL = maxL + 1.7;
+    const cF = Math.min(ltD, minD) - 1.3;
+    const cB = maxD + 1.4;
+    const ff = f.fullFinals || f.finals;
+    const s4 = [];
+    for(const m of this.men.values())
+      if(m.section === 4 && m.rank === "front") s4.push(ff.get(m.id));
+    const c4 = centroid(s4);
+    const post = add(c4, Bv, CLOSERD);
+    const postL = dot(post, Lv);
+    const XY = (lat, dep) => [ Lv[0]*lat + Bv[0]*dep, Lv[1]*lat + Bv[1]*dep ];
+    const w1 = XY(cL, cF);
+    const w2 = XY(cL, cB);
+    const w3 = XY(postL, cB);
+    lt.setPath([w1, w2, w3]);
+    lt.rank = "closer";
+    f.ltPost = post;
+    // the captain moves rapidly to where the right of the company will rest
+    const capt = this.men.get("capt");
+    const Fv = vec(h);
+    let captDest;
+    if(f.marchPast){
+      if(f.trailPlt === 1){
+        // Left-wheel + left-into-line: plt 1 is the TRAIL and has marched past plt 2.
+        // Anchor to C-1's current position (right-flank corporal of plt 1).
+        // Offset measured empirically: 2 paces right (Rv), 3 paces forward (Fv).
+        const c1 = this.men.get("C-1");
+        captDest = add(add(c1.pos, Rv, 2.0), Fv, 3.0);
+      } else {
+        // Right-wheel + right-into-line: plt 1 is the LEAD. Anchor to the
+        // right-flank front-rank man of plt 1 (1S now serves as the guide on
+        // the LEFT flank of the column, per 168, so he is no longer here).
+        // Offsets reproduce the previously verified captain position.
+        let rm = null;
+        for(const m of this.platoonMembers(1))
+          if(m.rank === "front" && m.id !== "1S" && m.id !== "capt")
+            if(!rm || dot(m.pos, Rv) > dot(rm.pos, Rv)) rm = m;
+        captDest = add(add(rm.pos, Rv, 1.8), Fv, 1.0);
+      }
+      f.captPost = captDest;
+    } else {
+      // Simultaneous-wheel case (e.g. left-into-line after right-wheel):
+      // original verified logic — rightmost front-rank fullFinals position.
+      // No captPost here: the dress step uses unshifted fullFinals as verified.
+      let rightSpot = null, bd = -Infinity;
+      for(const m of this.men.values())
+        if(m.rank === "front" && m.id !== "1S" && m.id !== "2S" && ff.has(m.id)){
+          const d = dot(ff.get(m.id), Rv);
+          if(d > bd){ bd = d; rightSpot = ff.get(m.id); }
+        }
+      captDest = add(rightSpot, Rv, FW);   // one pace right of C-1's spot
+    }
+    capt.setPath([captDest]);
+    this.state = "FORM_HALTED"; return null;
+  }
+  odFormDress(){
+    if(this.state !== "FORM_HALTED")
+      return "'Right--DRESS' here follows the halt of the wheeling platoons "+
+             "(previous command).";
+    this.clearPaths();
+    const f = this._form;
+    const ff = f.fullFinals || f.finals;
+    const Fv = vec(f.heading);
+    // In the march-past case the captain has moved to 1S's position + 1 pace right
+    // + 0.5 forward. Shift all fullFinals in Fv so the front rank dresses up to
+    // exactly the captain's forward level (captPost Fv - 0.5, i.e. level with 1S).
+    let fShift = 0, rShift = 0;
+    const Rv = vec(f.heading + Math.PI/2);
+    if(f.captPost){
+      let ffFrontEdge = -Infinity;
+      for(const m of this.men.values())
+        if(m.rank === "front" && ff.has(m.id))
+          ffFrontEdge = Math.max(ffFrontEdge, dot(ff.get(m.id), Fv));
+      // Dress front rank to captain's Fv level so company ends up directly to his left.
+      const targetF = dot(f.captPost, Fv);
+      fShift = targetF - ffFrontEdge;
+      // Left-wheel + left-into-line only: also shift laterally so the rightmost
+      // front-rank man (1S) lands exactly 1 pace to the captain's LEFT — giving
+      // the captain his own space in the line.
+      if(f.marchPast && f.trailPlt === 1){
+        let ffRightEdge = -Infinity;
+        for(const m of this.men.values())
+          if(m.rank === "front" && ff.has(m.id))
+            ffRightEdge = Math.max(ffRightEdge, dot(ff.get(m.id), Rv));
+        rShift = (dot(f.captPost, Rv) - FW) - ffRightEdge;
+      }
+    }
+    const shiftPt = tgt => {
+      let s = tgt;
+      if(fShift !== 0) s = add(s, Fv, fShift);
+      if(rShift !== 0) s = add(s, Rv, rShift);
+      return s;
+    };
+    for(const p of [1,2])
+      for(const m of this.platoonMembers(p)){
+        if(m.id === "capt" || m.id === "1L") continue;
+        const tgt = ff.get(m.id);
+        if(tgt){
+          const shifted = shiftPt(tgt);
+          if(dist(m.pos, shifted) > 1e-9) m.setPath([shifted]);
+        }
+      }
+    // the chief of the 2d platoon dresses up onto his file-closer post (also shifted)
+    const lt = this.men.get("1L");
+    const ltPost = f.ltPost ? shiftPt(f.ltPost) : null;
+    if(ltPost && dist(lt.pos, ltPost) > 1e-9) lt.setPath([ltPost]);
+    this.state = "FORM_DRESSED"; return null;
+  }
+  odFormFront(){
+    if(this.state !== "FORM_DRESSED") return "'FRONT' here follows 'Right--DRESS.'";
+    this.clearPaths();
+    this.state = "LINE_WHEELED"; return null;
+  }
+  // ---- On the right (left) into line: from the column by platoon, right
+  // (left) in front, marching or at a halt. The marker (2d lieutenant) runs
+  // out to mark where the flank of the new line will rest; the column
+  // marches up abreast; each group of four then wheels in succession and
+  // comes down onto the line.
+  odOnLinePrep(right){
+    if(this.state !== "COL_MARCH" && this.state !== "COL_HALT")
+      return "'On the right (left) into line' is given with the column by "+
+             "platoon marching or at a halt.";
+    this.finish();
+    const q = right ? 1 : -1;
+    const D = vec(this.colDir), Sv = vec(this.colDir + q*Math.PI/2);
+    const cen1 = centroid(this.platoonMembers(1).map(m => m.pos));
+    const cen2 = centroid(this.platoonMembers(2).map(m => m.pos));
+    const lead = dot(sub(cen1, cen2), D) > 0 ? 1 : 2;
+    if(right && lead !== 1)
+      return "'On the right into line' requires the column to be RIGHT in "+
+             "front (1st platoon leading).";
+    if(!right && lead !== 2)
+      return "'On the left into line' requires the column to be LEFT in "+
+             "front (2d platoon leading).";
+    this.clearPaths();
+    const aOf = p => dot(p, D), sOf = p => dot(p, Sv);
+    let headA = -Infinity, maxS = -Infinity;
+    for(const m of this.men.values()){
+      if(m.rank === "front" || m.rank === "rear") headA = Math.max(headA, aOf(m.pos));
+      maxS = Math.max(maxS, sOf(m.pos));
+    }
+    const sLine = maxS + 10;
+    const lt2 = this.men.get("2L");
+    let A = MARCH_PACES;
+    for(let i = 0; i < 10; i++){
+      const M = [D[0]*(headA + A) + Sv[0]*sLine, D[1]*(headA + A) + Sv[1]*sLine];
+      A = Math.max(A, dist(lt2.pos, M) / 1.8);
+    }
+    A += 0.1;   // margin so the marker is surely established before the head
+    const M = [D[0]*(headA + A) + Sv[0]*sLine, D[1]*(headA + A) + Sv[1]*sLine];
+    const W = A;
+    for(const m of this.men.values()){
+      const p0 = m.pos.slice();
+      if(m.id === "2L"){
+        const L = dist(p0, M);
+        m.setTimedPath(samplePath(t => {
+          const d = Math.min(L, t * W * 1.8);
+          const u = L <= 1e-9 ? 1 : d / L;
+          return [p0[0] + (M[0]-p0[0])*u, p0[1] + (M[1]-p0[1])*u];
+        }, 60));
+      } else {
+        m.setTimedPath(samplePath(t => add(p0, D, Math.min(A, t*W)), 40));
+      }
+    }
+    this._onRight = { M: M, sLine: sLine, Ma: headA + A,
+                      h: this.colDir + q*Math.PI/2, right: right, lead: lead };
+    this.state = "ONLINE_READY"; return null;
+  }
+  odOnLineTurn(){
+    if(this.state !== "ONLINE_READY")
+      return "'Right (left) turn' here follows 'On the right (left) into "+
+             "line' with the head of the column abreast the marker.";
+    this.clearPaths();
+    const o = this._onRight;
+    const right = o.right, q = right ? 1 : -1;
+    const D = vec(this.colDir), Sv = vec(this.colDir + q*Math.PI/2);
+    const h = o.h;
+    const aOf = p => dot(p, D), sOf = p => dot(p, Sv);
+    const Ma = o.Ma, sLine = o.sLine, sShort = sLine - 3;
+    const jobs = [], finals = new Map();
+    const ARC4 = 1.49 * Math.PI/2;
+    // Files of each platoon sorted from the line-side flank (the flank that
+    // forms first, nearest the marker's end of the line).
+    const fileLists = {};
+    for(const p of [1,2]){
+      const fronts = this.platoonMembers(p).filter(m =>
+        m.rank === "front" && m.id !== "1S" && m.id !== "capt");
+      fronts.sort((a,b) => sOf(b.pos) - sOf(a.pos));
+      const rears = this.platoonMembers(p).filter(m => m.rank === "rear");
+      fileLists[p] = fronts.map(fm => {
+        let best = null, bd = Infinity;
+        for(const rm of rears){
+          const d = Math.abs(sOf(rm.pos) - sOf(fm.pos));
+          if(d < bd){ bd = d; best = rm; }
+        }
+        return [fm, best];
+      });
+    }
+    const lead = o.lead, trail = lead === 1 ? 2 : 1;
+    const nLead = fileLists[lead].length;
+    const n = nLead + fileLists[trail].length;
+    // Record each front-rank man's march distance to his wheel point, so the
+    // closers can time their own start off the four standing in front of them.
+    const fileD1 = new Map();
+    const mkFour = (p, k, fOff) => {
+      const files = fileLists[p];
+      const pairA = files[2*k], pairB = (2*k + 1 < files.length) ? files[2*k+1] : null;
+      const f0 = fOff + 2*k;
+      const turnA = Ma + 1 + f0;
+      const pivotMan = pairA[0];
+      const d1 = turnA - aOf(pivotMan.pos);
+      const pivotTurnPt = add(pivotMan.pos, D, d1);
+      fileD1.set(pairA[0].id, d1);
+      if(pairB) fileD1.set(pairB[0].id, d1);
+      const members = [pairA[0], pairA[1]];
+      if(pairB){ members.push(pairB[0], pairB[1]); }
+      for(const m of members){
+        if(!m) continue;
+        const p0 = m.pos.slice();
+        const preWheel = add(p0, D, d1);
+        const postWheel = rotAbout(preWheel, pivotTurnPt, q*Math.PI/2);
+        // Rear-rank men keep their distance, halting RANKD behind.
+        const eDesc = sShort - sOf(postWheel) - (m.rank === "rear" ? RANKD : 0);
+        const stopPos = add(postWheel, Sv, eDesc);
+        finals.set(m.id, add(stopPos, Sv, 3));
+        const total = d1 + ARC4 + eDesc;
+        jobs.push({ m: m, hold: 0, total: total, fn: (t, W) => {
+          const dd = Math.min(total, t * W);
+          if(dd <= d1) return add(p0, D, dd);
+          if(dd <= d1 + ARC4)
+            return rotAbout(preWheel, pivotTurnPt,
+                            (q*Math.PI/2) * (dd - d1) / ARC4);
+          return add(postWheel, Sv, dd - d1 - ARC4);
+        }});
+      }
+    };
+    for(let k = 0; 2*k < fileLists[lead].length; k++) mkFour(lead, k, 0);
+    for(let k = 0; 2*k < fileLists[trail].length; k++) mkFour(trail, k, nLead);
+    const mkRun = (m, pts, hold) => {
+      hold = hold || 0;
+      const cum = [0];
+      for(let k = 1; k < pts.length; k++) cum.push(cum[k-1] + dist(pts[k-1], pts[k]));
+      const total = cum[cum.length-1];
+      jobs.push({ m: m, hold: hold, total: total, fn: (t, W) => {
+        const dd = Math.min(total, Math.max(0, t * W - hold));
+        for(let k = 1; k < pts.length; k++)
+          if(dd <= cum[k] || k === pts.length - 1){
+            const seg = cum[k]-cum[k-1], u = seg<=1e-12?0:Math.min(1,(dd-cum[k-1])/seg);
+            return [pts[k-1][0]+(pts[k][0]-pts[k-1][0])*u,
+                    pts[k-1][1]+(pts[k][1]-pts[k-1][1])*u];
+          }
+        return pts[pts.length-1];
+      }});
+    };
+    // The captain places himself at the marker's end of the line — the flank
+    // on which the company will dress.
+    const capt = this.men.get("capt");
+    const captTgt = [D[0]*Ma + Sv[0]*sLine, D[1]*Ma + Sv[1]*sLine];
+    mkRun(capt, [capt.pos.slice(),
+                 add(capt.pos, D, Math.max(0, (Ma - 2) - aOf(capt.pos))),
+                 captTgt]);
+    finals.set("capt", captTgt);
+    // The marker (2L) side-steps to clear the captain's place.
+    mkRun(this.men.get("2L"), [this.men.get("2L").pos.slice(),
+                               add(this.men.get("2L").pos, D, -1)]);
+    // Guides: each posts himself immediately in front of where the far flank
+    // of his platoon will rest, facing the captain. 1S serves the 1st
+    // platoon, 2S the 2d, whichever leads.
+    const mkGuide = (id, fEnd) => {
+      const g = this.men.get(id);
+      const tgt = [D[0]*(Ma + fEnd) + Sv[0]*(sLine + 1),
+                   D[1]*(Ma + fEnd) + Sv[1]*(sLine + 1)];
+      const wp = [D[0]*(Ma + fEnd) + Sv[0]*sOf(g.pos),
+                  D[1]*(Ma + fEnd) + Sv[1]*sOf(g.pos)];
+      mkRun(g, [g.pos.slice(), wp, tgt]);
+      finals.set(id, tgt);
+    };
+    mkGuide(lead === 1 ? "1S" : "2S", nLead);
+    mkGuide(lead === 1 ? "2S" : "1S", n);
+    // 1L: two paces before the centre of the 2d platoon's line, facing it.
+    {
+      const lt = this.men.get("1L");
+      const fOff2 = (lead === 2) ? 0 : nLead;
+      const cA = Ma + 1 + fOff2 + (fileLists[2].length - 1)/2;
+      mkRun(lt, [lt.pos.slice(),
+                 [D[0]*cA + Sv[0]*(sLine + 2), D[1]*cA + Sv[1]*(sLine + 2)]]);
+    }
+    // File closers follow BEHIND the fours of their own platoons: each holds
+    // until his platoon's last four has completed its wheel, then trails to
+    // his post behind the line.
+    const postIds = ["3S","4S","5S"];
+    if(this.men.has("3L")) postIds.push("3L");
+    const postFi = { "3S": this.n1 + 1, "4S": this.n1 - 2, "5S": 1,
+                     "3L": (this.n1 + this.nFiles - 1)/2 };
+    for(const id of postIds){
+      const m = this.men.get(id);
+      // slot counted from the marker end: from the right if forming on the
+      // right, from the left (reversed) if forming on the left.
+      const slot = right ? postFi[id] : (this.nFiles - 1 - postFi[id]);
+      const post = [D[0]*(Ma + 1 + slot) + Sv[0]*(sLine - CLOSERD),
+                    D[1]*(Ma + 1 + slot) + Sv[1]*(sLine - CLOSERD)];
+      const wp = [D[0]*(Ma + 1 + slot) + Sv[0]*sOf(m.pos),
+                  D[1]*(Ma + 1 + slot) + Sv[1]*sOf(m.pos)];
+      // Each closer starts shortly after the four in front of him: find his
+      // nearest file laterally, and hold just long enough that he reaches
+      // its wheel ground after that four has turned and cleared.
+      let d1g = 0, bd = Infinity;
+      for(const [fm] of fileLists[m.platoon]){
+        const d = Math.abs(sOf(fm.pos) - sOf(m.pos));
+        if(d < bd){ bd = d; d1g = fileD1.get(fm.id) || 0; }
+      }
+      const dC1 = dist(m.pos, wp);
+      const hold = Math.max(0, d1g + ARC4 + 2 - dC1);
+      mkRun(m, [m.pos.slice(), wp, post], hold);
+    }
+    let W = 0;
+    for(const j of jobs) W = Math.max(W, j.hold + j.total);
+    for(const j of jobs)
+      j.m.setTimedPath(samplePath(t => j.fn(t, W), 120));
+    this.heading = h;
+    this.faceAll(h);
+    capt.facing = h - q*Math.PI/2;                     // along the line, to it
+    this.men.get("1S").facing = h + q*Math.PI/2;       // toward the captain
+    this.men.get("2S").facing = h + q*Math.PI/2;
+    this.men.get("1L").facing = h + Math.PI;           // toward his platoon
+    o.finals = finals;
+    this.state = "ONLINE_HALTED"; return null;
+  }
+  odOnLineDress(){
+    if(this.state !== "ONLINE_HALTED")
+      return "'Right (left)--DRESS' here follows the halt of the fours "+
+             "three paces from the line.";
+    this.clearPaths();
+    const o = this._onRight;
+    for(const m of this.men.values()){
+      if(m.id === "capt" || m.id === "1S" || m.id === "2S" ||
+         m.id === "1L" || m.id === "2L") continue;
+      const tgt = o.finals.get(m.id);
+      if(tgt && dist(m.pos, tgt) > 1e-9) m.setPath([tgt]);
+    }
+    this.state = "ONLINE_DRESSED"; return null;
+  }
+
+  odGuidesPosts(){
+    if(this.state !== "LINE_WHEELED" && this.state !== "ONLINE_DRESSED")
+      return "'Guides--POSTS' is given when the company stands aligned in its "+
+             "new line of battle (after FRONT / the dress).";
+    this.clearPaths();
+    const h = this.heading;
+    const B = vec(h + Math.PI), F = vec(h);
+    const Rv = vec(h + Math.PI/2), Lv = vec(h - Math.PI/2);
+    const capt = this.men.get("capt"), s1 = this.men.get("1S");
+    capt.rank = "front";
+    // Flank references from the dressed front rank.
+    let rightMan = null, leftMan = null;
+    for(const m of this.men.values())
+      if(m.rank === "front" && m.id !== "capt" && m.id !== "1S"){
+        if(!rightMan || dot(m.pos, Rv) > dot(rightMan.pos, Rv)) rightMan = m;
+        if(!leftMan  || dot(m.pos, Lv) > dot(leftMan.pos, Lv))  leftMan  = m;
+      }
+    // The captain's post is the right of the front rank (251/259). If he
+    // anchored the dress from the LEFT, he crosses around the front of the
+    // company; otherwise he stands fast.
+    let captPost = capt.pos.slice();
+    if(dot(capt.pos, Rv) < dot(rightMan.pos, Rv) + 0.3){
+      captPost = add(rightMan.pos, Rv, FW);
+      const wp1 = add(capt.pos, F, 2);
+      const wp2 = add(captPost, F, 2);
+      capt.setPath([wp1, wp2, captPost]);
+      this._captSpeedMult = 1.5;
+    }
+    // 1S covers the captain (251).
+    const cover = add(captPost, B, RANKD);
+    if(dist(s1.pos, cover) > 1e-9) s1.setPath([cover]);
+    s1.rank = "cover";
+    // 2S returns to his place as a file closer, second file from the left
+    // (251/259); 2L (if detached as a marker) likewise to his post.
+    const closerTo = (m, post, aroundLeft) => {
+      if(dist(m.pos, post) < 1.5) return;
+      const endMan = aroundLeft ? leftMan : rightMan;
+      const outv = aroundLeft ? Lv : Rv;
+      const wp1 = add(endMan.pos, outv, 1.5);
+      const wp2 = add(wp1, B, CLOSERD);
+      m.setPath([wp1, wp2, post]);
+      m.rank = "closer";
+    };
+    closerTo(this.men.get("2S"),
+             add(add(leftMan.pos, Rv, FW), B, CLOSERD), true);
+    closerTo(this.men.get("2L"),
+             add(add(rightMan.pos, Lv, ((this.n1 - 1)/2) * FW), B, CLOSERD),
+             false);
+    const lt = this.men.get("1L");
+    if(dist(lt.pos, add(centroid(this.menArr().filter(m =>
+        m.rank === "front" && m.section === 4).map(m => m.pos)), B, CLOSERD)) > 1.5){
+      const ms = this.menArr().filter(m => m.rank === "front" && m.section === 4);
+      const cc = centroid(ms.map(m => m.pos));
+      lt.setPath([add(cc, B, CLOSERD)]);
+    }
+    lt.rank = "closer";
+    this.faceAll(h);
+    this.state = "LINE_HALT"; return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The drill book: Casey's text + command tree
+// ---------------------------------------------------------------------------
+const TXT_ABOUT =
+"TITLE THIRD — SCHOOL OF THE COMPANY.\n\n"+
+"1. Instruction by company will always precede that by battalion ... the "+
+"exercises of detail by company will be strictly adhered to, as well in "+
+"respect to principles, as the order of progression herein prescribed.\n\n"+
+"2. There will be attached to a company undergoing elementary instruction, a "+
+"captain, a covering sergeant, and a certain number of file closers, the "+
+"whole posted in the manner indicated, Title First ... the officer charged "+
+"with the exercise of such company will herein be denominated the "+
+"instructor.\n\n"+
+"4. The company will always be formed in two ranks.\n\n"+
+"5. ... He will also cause the company to be divided into platoons and "+
+"sections, taking care that the first platoon is always composed of an even "+
+"number of files.\n\n"+
+"Posts (Title First): the captain on the right of the company in the front "+
+"rank; the first sergeant in the rear rank covering the captain (the "+
+"'covering sergeant' or right guide); all other officers and sergeants as "+
+"file closers, two paces behind the rear rank; the corporals in the front "+
+"rank on the right and left of the platoons.\n\n"+
+"Pick a command from the drill book on the left.  Click any soldier to see "+
+"who he is.  Drag the field to pan; use the Zoom slider or the mouse wheel.";
+
+const BOOK = [
+["LESSON I", [
+  ["Article 1: To open ranks",
+   "8. The company being at ordered arms, the ranks and file closers well "+
+   "aligned, when the instructor shall wish to cause the ranks to be opened, "+
+   "he will direct the left guide to place himself on the left of the front "+
+   "rank; which being executed, he will command:\n\n"+
+   "1. Attention. 2. Company. 3. Shoulder--ARMS. 4. To the rear open order.\n\n"+
+   "9. At the fourth command, the covering sergeant and the left guide will "+
+   "step off smartly to the rear, four paces from the front rank, in order to "+
+   "mark the alignment of the rear rank ...\n\n5. MARCH.\n\n"+
+   "11. At this command, the front rank will stand fast. 12. The rear rank "+
+   "will step to the rear ... and place themselves on the alignment marked "+
+   "for this rank ... 14. The file closers will march to the rear at the same "+
+   "time with the rear rank, and will place themselves two paces from this "+
+   "rank when it is aligned. 15. The instructor, seeing the rear rank "+
+   "aligned, will command:\n\n6. FRONT.\n\n"+
+   "16. At this command, the sergeant on the left of the rear rank will "+
+   "return to his place as a file closer.",
+   [
+     ["(Preparation) Left guide to the left of the front rank","open_prep",
+      "The 2d Sergeant (left guide) leaves the rank of file closers and posts "+
+      "himself on the left of the front rank."],
+     ["To the rear open order","open_order",
+      "The covering sergeant (1S) and the left guide (2S) step four paces to "+
+      "the rear of the front rank to mark the new rear-rank alignment."],
+     ["MARCH","open_march",
+      "The rear rank steps back to the marked alignment; the file closers "+
+      "follow, re-posting two paces behind the rear rank."],
+     ["FRONT","open_front",
+      "The left guide (2S) returns to his own place in the rank of file "+
+      "closers."]
+   ]],
+  ["Article 2: Alignments in open ranks",
+   "18. The ranks being open, the instructor will, in the first exercises, "+
+   "align the ranks man by man ... 'By file right (or left)--DRESS' ... "+
+   "'Right (or left)--DRESS. FRONT.'\n\n(Alignment drill — not animated in "+
+   "this version.)", []],
+  ["Article 3: Manual of arms",
+   "26. The ranks being open, the instructor will place himself in a position "+
+   "to see the ranks, and will command the manual of arms ... (Present arms, "+
+   "Order arms, Support arms, Fix bayonet, etc.)\n\n(Weapon handling — no "+
+   "movement to animate.)", []],
+  ["Article 4: To close ranks",
+   "The ranks being open, to close them the instructor commands:\n\n"+
+   "1. Close order. 2. MARCH.\n\n"+
+   "At the command march, the rear rank will close up in quick time, each man "+
+   "covering his file leader.  (Condensed.)",
+   [
+     ["Close order — MARCH","close_order",
+      "The rear rank closes up on the front rank; the file closers resume "+
+      "their posts two paces behind it."]
+   ]],
+  ["Article 5: Alignments and manual of arms in closed ranks",
+   "The alignments in closed ranks will be executed by the same commands and "+
+   "according to the same principles as in open ranks ... (Not animated in "+
+   "this version.)", []]
+]],
+["LESSON II", [
+  ["Article 1: To load in four times and at will",
+   "The firing lessons exercise the handling of the piece: loading in four "+
+   "times, and loading at will.  (No movement to animate.)", []],
+  ["Article 2: To fire by company",
+   "1. Fire by company. 2. Company. 3. READY. 4. AIM. 5. FIRE. 6. LOAD.  (No "+
+   "movement to animate.)", []],
+  ["Article 3: To fire by file",
+   "1. Fire by file. 2. Company. 3. READY. 4. COMMENCE FIRING.  Firing begins "+
+   "on the right of the company and passes file by file to the left.  (No "+
+   "movement to animate.)", []],
+  ["Article 4: To fire by rank",
+   "1. Fire by rank. 2. Company. 3. READY. 4. Rear rank--AIM. 5. FIRE. "+
+   "6. LOAD.  (No movement to animate.)", []],
+  ["Article 5: To fire by the rear rank",
+   "The company may be made to face about and fire to the rear ... (Not "+
+   "animated in this version.)", []]
+]],
+["LESSON III", [
+  ["Article 1: To advance in line of battle",
+   "The company being correctly aligned, and the instructor wishing to cause "+
+   "it to march in line of battle, he will point out to the covering sergeant "+
+   "two distinct objects in advance on the perpendicular to the front, and "+
+   "command:\n\n1. Company, forward. 2. MARCH.\n\n"+
+   "At the first command, the covering sergeant will step briskly six paces "+
+   "in front of the captain; the instructor will assure himself that the "+
+   "sergeant is correctly established on the two points of direction.\n\n"+
+   "At the command march, the company will step off smartly with the left "+
+   "foot; the covering sergeant, charged with the direction, will march "+
+   "steadily on the points indicated; the captain will march in rear of the "+
+   "sergeant; and the men will keep the touch of elbows toward the side of "+
+   "the guide ...  The file closers will march two paces in rear of the rear "+
+   "rank.  (Condensed.)",
+   [
+     ["Company, forward","company_forward",
+      "The company is ordered forward.  The covering sergeant (1S) remains "+
+      "in the rear rank behind the captain — the six-pace guide posting is "+
+      "a training device only (par. 104); in the field the 1S stays in the "+
+      "rear rank throughout the advance."],
+     ["MARCH","line_march",
+      "The whole company steps off and advances "+MARCH_PACES+" paces in line "+
+      "of battle.  (Click MARCH again to continue the advance.)"]
+   ]],
+  ["Article 2: To halt the company marching in line of battle, and to align it",
+   "The company marching in line of battle, to halt it the instructor will "+
+   "command:\n\n1. Company. 2. HALT.\n\n"+
+   "At the second command, the company will halt.  The instructor will then, "+
+   "if necessary, align the company by the right.  (Condensed.)",
+   [
+     ["Company",null,
+      "Preparatory command — the men steady themselves; nothing moves until "+
+      "the command of execution."],
+     ["HALT","line_halt",
+      "The company halts in place."]
+   ]],
+  ["Article 3: Oblique march in line of battle",
+   "101. The company being in the direct march, when the instructor shall "+
+   "wish to cause it to march obliquely, he will command:\n\n"+
+   "1. Right (or left) oblique. 2. MARCH.\n\n"+
+   "102. At the command march, the company will take the oblique step. The "+
+   "men will accurately observe the principles prescribed in the S. S., No. "+
+   "340. The rear rank men will preserve their distances, and march in rear "+
+   "of the man next on the right (or left) of their habitual file "+
+   "leaders.\n\n"+
+   "103. When the instructor wishes the direct march to be resumed, he will "+
+   "command:\n\n1. Forward. 2. MARCH.\n\n"+
+   "104. At the command march, the company will resume the direct march.\n\n"+
+   "105. In the oblique march, the men not having the touch of elbows, the "+
+   "guide will always be on the side toward which the oblique is made, "+
+   "without any indication to that effect being given; and when the direct "+
+   "march is resumed, the guide will be, equally without indication, on the "+
+   "side where it was previous to the oblique.\n\n"+
+   "107. During the continuance of the march, the instructor will be "+
+   "watchful that the men follow parallel directions ... whenever the men "+
+   "lose the alignment, he will be careful that they regain it by "+
+   "lengthening or shortening the step, without altering the cadence, or "+
+   "changing the direction.",
+   [
+     ["1. Right oblique. 2. MARCH","oblique_right",
+      "Given with the company in line of battle, marching or at a halt. "+
+      "Every man half-faces to "+
+      "the right and marches diagonally to the front on a parallel "+
+      "direction; the rear-rank men shift to march in rear of the man next "+
+      "on the RIGHT of their habitual file leaders (par. 102). The guide "+
+      "passes, without indication, to the right (par. 105)."],
+     ["1. Left oblique. 2. MARCH","oblique_left",
+      "The same movement toward the left: each man half-faces to the left "+
+      "and marches diagonally; the rear-rank men march in rear of the man "+
+      "next on the LEFT of their habitual file leaders."],
+     ["1. Forward. 2. MARCH","oblique_forward",
+      "Resumes the direct march from the oblique (par. 103-104). The men "+
+      "face to the front, the rear rank returns to its habitual file "+
+      "leaders, and the guide returns, without indication, to the side "+
+      "where it was before the oblique."],
+     ["1. Company. 2. HALT","line_halt",
+      "Halts the company from the oblique march; the men halt in place and "+
+      "face to the front."]
+   ]],
+  ["Article 4: To mark time, to march in double quick time, and the back step",
+   "1. Mark time. 2. MARCH. — 1. Double quick. 2. MARCH. — 1. Backward. "+
+   "2. MARCH.  (Cadence changes — not animated in this version.)", []],
+  ["Article 5: To march in retreat in line of battle",
+   "1. Company, about--FACE. 2. Company, forward. 3. MARCH.  The company "+
+   "faces to the rear and marches in retreat ... (Not animated in this "+
+   "version.)", []]
+]],
+["LESSON IV", [
+  ["Article 1: To march by the flank",
+   "The company being at a halt, and correctly aligned, the instructor will "+
+   "command:\n\n1. Company, right--FACE. 2. Forward. 3. MARCH.\n\n"+
+   "At the first command, the captain steps one pace forward and turns right; "+
+   "the covering sergeant (1S) steps forward into the captain's vacated spot "+
+   "and turns right, placing himself at the head of the front rank; the "+
+   "captain then stands on the LEFT side of 1S.  The files double into a "+
+   "column of fours.\n\n"+
+   "143. LEFT-FACE (par. 143): at the instant the company faces to the left, "+
+   "the left guide will place himself at the head of the front rank; the "+
+   "captain will pass rapidly to the left, and place himself by the right "+
+   "side of this guide; the covering sergeant will replace the captain in "+
+   "the front rank the moment the latter quits it.\n\n"+
+   "At the command march, the company will step off smartly with the left "+
+   "foot; the file closers will march opposite their places in line of "+
+   "battle.",
+   [
+     ["Company, right--FACE","right_face",
+      "The captain steps one pace forward, then turns right.  The covering "+
+      "sergeant (1S) steps forward into the captain's vacated front-rank spot "+
+      "and turns right — he now stands at the head of the column (directly "+
+      "ahead of C-1 / right-flank corporal).  The captain stands on 1S's left. "+
+      "The files double into a column of fours."],
+     ["Company, left--FACE","left_face",
+      "The captain passes rapidly to the left end of the front rank.  The "+
+      "covering sergeant (1S) steps forward into the captain's vacated spot "+
+      "and turns left, placing himself at the head of the front rank on the "+
+      "left.  The captain stands on 1S's right side.  Files double into a "+
+      "column of fours marching to the left."],
+     ["Forward — MARCH","flank_march",
+      "The company marches by the flank "+MARCH_PACES+" paces, each file of "+
+      "four abreast.  (Click again to continue.)"]
+   ]],
+  ["Article 2: To change direction by file",
+   "The company marching by the flank, to cause it to change direction, the "+
+   "instructor will command:\n\n1. By file left (or right). 2. MARCH.\n\n"+
+   "At the command march, the first file will change direction to the left "+
+   "(right); each successive file will come to change direction on the same "+
+   "ground as the first.  (Condensed.)",
+   [
+     ["By file left — MARCH","by_file_left",
+      "The leading file of four WHEELS 90 degrees to the left on the wheeling "+
+      "ground — the inner man shortening his step, the outer man stepping "+
+      "full — and each following file wheels in succession on the same "+
+      "ground, so the column of fours bends around the corner with each rank "+
+      "of four kept aligned."],
+     ["By file right — MARCH","by_file_right",
+      "The same movement, wheeling to the right — the file closers, being "+
+      "then on the inner flank, become the pivot side."]
+   ]],
+  ["Article 3: To halt the company marching by the flank, and to face it to "+
+   "the front",
+   "The company marching by the flank, to halt it the instructor will "+
+   "command:\n\n1. Company. 2. HALT. 3. FRONT.\n\n"+
+   "At the second command the company will halt; at the third it will face to "+
+   "the front.  (Condensed.)",
+   [
+     ["Company — HALT",null,
+      "The column stops where it is.  (In this simulation the company already "+
+      "halts at the end of each MARCH segment.)"],
+     ["FRONT","flank_front",
+      "Every man faces to the front and the files UNDOUBLE: the column of "+
+      "fours re-forms as the two ranks of the line of battle, the captain and "+
+      "covering sergeant resuming the right of the company and the file "+
+      "closers their posts two paces behind the rear rank."]
+   ]],
+  ["Article 4: The company being in march by the flank, to form it on the "+
+   "right (or left) by file into line of battle",
+   "150. If the company be marching by the right flank, the instructor will "+
+   "command:\n\n1. On the right, by file into line. 2. MARCH.\n\n"+
+   "151. At the command march, the rear-rank men doubled, will mark time; "+
+   "the captain and the covering sergeant will turn to the right, march "+
+   "straight forward, and be halted by the instructor when they shall have "+
+   "passed at least six paces beyond the rank of file closers; the captain "+
+   "will place himself correctly on the line of battle, and will direct the "+
+   "alignment as the men of the front rank successively arrive; the covering "+
+   "sergeant will place himself behind the captain at the distance of the "+
+   "rear rank; the two men on the right of the front rank doubled, will "+
+   "continue to march, and passing beyond the covering sergeant and the "+
+   "captain, will turn to the right; after turning, they will continue to "+
+   "march elbow to elbow, and direct themselves toward the line of battle, "+
+   "but when they shall arrive at two paces from this line, the even number "+
+   "will shorten the step so that the odd number may precede him on the "+
+   "line, the odd number placing himself by the side and on the left of the "+
+   "captain; the even number will afterward oblique to the left, and place "+
+   "himself on the left of the odd number; the next two men of the front "+
+   "rank doubled, will pass in the same manner behind the two first, turn "+
+   "then to the right, and place themselves, according to the means just "+
+   "explained, to the left, and by the side of, the two men already "+
+   "established on the line; the remaining files of this rank will follow "+
+   "in succession, and be formed to the left in the same manner. The rear "+
+   "rank doubled will execute the movement in the manner already explained "+
+   "for the front rank, taking care not to commence the movement until four "+
+   "men of the front rank are established on the line of battle; the "+
+   "rear-rank men, as they arrive on the line, will cover accurately their "+
+   "file leaders.\n\n"+
+   "152. If the company be marching by the left flank, the instructor will "+
+   "cause it to form by file on the left into line of battle, according to "+
+   "the same principles and by the same commands, substituting the "+
+   "indication left for right.",
+   [
+     ["1. On the right, by file into line. 2. MARCH","file_into_line_right",
+      "Given while the company is marching by the RIGHT flank. The captain "+
+      "and covering sergeant turn to the right and march straight forward, "+
+      "halting six paces beyond the rank of file closers, where the captain "+
+      "establishes the line of battle. The files follow in succession: each "+
+      "front-rank man marches on, turns to the right above his place, and "+
+      "comes down onto the line to the left of the men already established. "+
+      "The rear rank marks time until four front-rank men are on the line, "+
+      "then forms in the same manner, each man covering his file leader. "+
+      "The file closers take their posts behind the new line."],
+     ["1. On the left, by file into line. 2. MARCH","file_into_line_left",
+      "Given while the company is marching by the LEFT flank (par. 152). The "+
+      "same principles apply, substituting left for right: the captain and "+
+      "the left guide (2S) turn to the left and march to the line, the "+
+      "captain placing himself temporarily on the LEFT of the front rank; "+
+      "the files wheel and form successively to his right, the odd numbers "+
+      "now shortening the step so the even numbers precede them on the "+
+      "line. 1S marches on to his post covering the captain's place on the "+
+      "right of the company."],
+     ["Captain and left guide — to your POSTS","file_into_line_posts",
+      "After the company is formed and aligned on the left (par. 152), the "+
+      "captain returns around the front of the company to his post on the "+
+      "right of the front rank, and the left guide (2S) returns to his post "+
+      "among the file closers, second file from the left."]
+   ]],
+  ["Article 5: The company marching by the flank, to form it by company or "+
+   "platoon into line",
+   "155. The company being in march by the right flank, the instructor will "+
+   "order the captain to form it into line; the captain will immediately "+
+   "command:\n\n1. By company, into line. 2. MARCH.\n\n"+
+   "156. At the command march, the covering sergeant will continue to march "+
+   "straight forward; the men will advance the right shoulder, take the "+
+   "double quick step, and move into line, by the shortest route, taking "+
+   "care to undouble the files, and to come on the line one after the "+
+   "other.\n\n"+
+   "157. As the front-rank men successively arrive in line with the "+
+   "covering sergeant, they will take from him the step, and then turn "+
+   "their eyes to the front.\n\n"+
+   "158. The men of the rear rank will conform to the movements of their "+
+   "respective file leaders, but without endeavoring to arrive in line at "+
+   "the same time with the latter.\n\n"+
+   "160. At the instant the movement begins, the captain will face to his "+
+   "company in order to follow up the execution; and, as soon as the "+
+   "company is formed, he will command guide left, place himself two paces "+
+   "before the center, face to the front, and take the step of the "+
+   "company.\n\n"+
+   "161. At the command guide left, the second sergeant will promptly place "+
+   "himself in the front rank, on the left, to serve as guide, and the "+
+   "covering sergeant who is on the opposite flank will remain there.\n\n"+
+   "162. When the company marches by the left flank, this movement will be "+
+   "executed by the same commands, and according to the same principles; "+
+   "the company being formed, the captain will command guide right; the "+
+   "covering sergeant on the right of the front rank will serve as guide, "+
+   "and the second sergeant placed on the left flank will remain there.\n\n"+
+   "164. The company being in march by the flank, if it be the wish of the "+
+   "instructor to cause it to form platoons, he will give an order to that "+
+   "effect to the captain, who will command:\n\n"+
+   "1. By platoon, into line. 2. MARCH.\n\n"+
+   "165. The movement will be executed by each platoon according to the "+
+   "above principles. The captain will place himself before the center of "+
+   "the first platoon, and the first lieutenant before the center of the "+
+   "second. Both, without waiting for each other, will command guide left "+
+   "(or right) at the instant their respective platoons are formed.\n\n"+
+   "166-168. At the command guide left (or right), the guide of each "+
+   "platoon will pass rapidly to the indicated flank of the platoon, if not "+
+   "already there. The right guide of the company will always serve as "+
+   "guide of the first platoon, the left guide of the second. In a column "+
+   "by platoon there is but one guide to each platoon; on its left flank if "+
+   "the right be in front, on the right flank if the left be in front.\n\n"+
+   "169. In these movements, the file closers will follow the platoons to "+
+   "which they are attached.",
+   [
+     ["1. By company, into line. 2. MARCH","flank_company_into_line",
+      "Given while the company marches by the flank, without halting. The "+
+      "head guide marches straight on at the common step; every other man "+
+      "takes the double-quick and moves into line by the shortest route, "+
+      "undoubling as he comes, files arriving one after the other, the "+
+      "rear-rank men following their file leaders. The other sergeant runs "+
+      "to the far flank as guide, the captain places himself two paces "+
+      "before the center, and the company marches on in line of battle."],
+     ["1. By platoon, into line. 2. MARCH","flank_platoon_into_line",
+      "Each platoon forms line by the same principles, producing a column "+
+      "by platoon on the march — right in front if marching by the right "+
+      "flank, left in front if by the left. One guide to each platoon on "+
+      "the outer flank (1S with the 1st platoon, 2S with the 2d); the "+
+      "captain posts before the center of the 1st platoon and the first "+
+      "lieutenant before the 2d; the file closers follow their platoons."]
+   ]]
+]],
+["LESSON V", [
+  ["Article 1: To break into column by platoon at a halt",
+   "The company being at a halt, and in line of battle, to break it into "+
+   "column by platoon, the instructor will command:\n\n"+
+   "1. By platoon, right wheel. 2. MARCH.\n\n"+
+   "At the first command, the captain and first lieutenant will place "+
+   "themselves rapidly two paces in front of the centres of their respective "+
+   "platoons; the covering sergeant will step into the front rank, in the "+
+   "place of the captain.\n\n"+
+   "At the command march, each platoon will wheel to the right on a fixed "+
+   "pivot; the pivot man will mark time in his place, turning gradually; the "+
+   "outer flank will describe the arc of a circle.  When the wheel is nearly "+
+   "completed, each chief of platoon will command: 1. Platoon. 2. HALT — and "+
+   "align his platoon.\n\n"+
+   "The company may in like manner be broken to the LEFT by inverse commands: "+
+   "1. By platoon, left wheel. 2. MARCH — each platoon wheeling to the left "+
+   "on a fixed pivot, the second platoon then finding itself at the head of "+
+   "the column (left in front).  (Condensed.)",
+   [
+     ["By platoon, right (left) wheel","break_prep",
+      "The captain posts himself two paces in front of the centre of the 1st "+
+      "platoon, the 1st lieutenant in front of the 2d; the covering sergeant "+
+      "(1S) steps into the front rank to fill the captain's place."],
+     ["MARCH (right wheel)","break_march_right",
+      "The right front-rank man of each platoon faces to the right and "+
+      "stands fast as the fixed pivot (178); each chief runs a little "+
+      "beyond the point where the marching flank will rest, faces the late "+
+      "rear, and halts his platoon three paces short of the perpendicular "+
+      "(179); the covering sergeant then moves, passing by the front rank, "+
+      "to where the LEFT of the 1st platoon is to rest, the second sergeant "+
+      "in like manner for the 2d, each leaving a space equal to the front "+
+      "of his platoon."],
+     ["MARCH (left wheel)","break_march_left",
+      "Each platoon wheels to the left on a fixed pivot (the left-flank "+
+      "front-rank man faces to the left and stands fast); the chiefs mark "+
+      "the perpendicular and halt their platoons three paces short; the "+
+      "sergeants move to where the RIGHT of each platoon is to rest (186)."],
+     ["3. Left (Right)--DRESS","break_dress",
+      "Each chief, two paces outside his guide and facing him, dresses his "+
+      "platoon the last three paces up onto the perpendicular, aligning the "+
+      "sergeant between himself and the man who had faced (179-180, 186)."],
+     ["FRONT","break_front",
+      "The alignment ended, each chief commands Front and places himself "+
+      "two paces before the center of his platoon (181, 187). The company "+
+      "is in column by platoon, one guide on the flank of each platoon."],
+     ["MARCH -- and forward, Guide left (right wheel)","break_forward_right",
+      "The cautioned variant (188-193): the chiefs remain before their "+
+      "centers during the wheel, the pivot man marks time instead of "+
+      "facing, and the wheel runs full to the perpendicular; at the instant "+
+      "it completes -- Forward, MARCH, Guide left -- the sergeants move "+
+      "rapidly to the LEFT flanks of their platoons (1S passing before the "+
+      "front rank) and the column steps off without a halt. May also be "+
+      "given from the march in line (194)."],
+     ["MARCH -- and forward, Guide right (left wheel)","break_forward_left",
+      "The same movement breaking to the left (195): full wheel to the "+
+      "left, then Forward, MARCH, Guide right -- the sergeants move to the "+
+      "RIGHT flanks and the column (left in front) marches on."]
+   ]],
+  ["Article 2: To march in column",
+   "The column being at a halt ... the instructor will command:\n\n"+
+   "1. Column, forward. 2. Guide left (or right). 3. MARCH.\n\n"+
+   "At the command march, both platoons will step off together; the guides "+
+   "will march on the prolongation of the direction; each chief of platoon "+
+   "will see that his platoon preserves its distance.  (Condensed.)",
+   [
+     ["Column, forward — Guide left — MARCH","col_march",
+      "The column of platoons advances "+MARCH_PACES+" paces, the platoons "+
+      "preserving their wheeling distance.  (Click again to continue.)"]
+   ]],
+  ["Article 3: To change direction",
+   "The column of platoons being in march, to cause it to change direction "+
+   "the instructor will command:\n\n"+
+   "1. Head of column to the left (or right). 2. MARCH.\n\n"+
+   "The leading platoon will wheel to the left (right) on a movable pivot: "+
+   "the pivot man will shorten his step over a small arc, the outer flank "+
+   "will move at the full step over the large arc.  Each succeeding platoon "+
+   "will march squarely up to the wheeling ground and there wheel in like "+
+   "manner, on the same ground as the first.  (Condensed.)",
+   [
+     ["Head of column to the left — MARCH","col_left",
+      "The leading platoon wheels 90 degrees to the left on the wheeling "+
+      "ground and moves on; the second platoon slackens its step to give the "+
+      "first room, marches up to the same ground, and wheels after it."],
+     ["Head of column to the right — MARCH","col_right",
+      "The same movement, wheeling to the right."]
+   ]],
+  ["Article 4: To halt the column",
+   "The column being in march, to halt it the instructor will command:\n\n"+
+   "1. Column. 2. HALT.\n\n"+
+   "At the second command the column will halt; the guides will stand fast.  "+
+   "(Condensed.)",
+   [
+     ["Column — HALT","col_halt",
+      "The column halts in place.  (In this simulation the column already "+
+      "halts at the end of each MARCH segment; this command sets the state so "+
+      "the column can be formed into line.)"]
+   ]],
+  ["Article 5: Being in column by platoon, to form to the left (or right) "+
+   "into line of battle",
+   "The column by platoon, right in front, being at a halt, to form it to "+
+   "the left into line of battle the instructor will command:\n\n"+
+   "1. Left into line, wheel. 2. MARCH.\n\n"+
+   "At the command march, each platoon will wheel to the left on a fixed "+
+   "pivot.  Each chief of platoon will then command:\n\n"+
+   "1. Platoon. 2. HALT.\n\n"+
+   "245. The command halt will be given when the marching flank of the "+
+   "platoon is three paces from the line of battle.\n\n"+
+   "246. The chief of the second platoon, having halted it, will return to "+
+   "his place as a file closer, passing around the left of his subdivision.\n\n"+
+   "247. The captain, having halted the first platoon, will move rapidly to "+
+   "the point at which the right of the company will rest in line of battle, "+
+   "and command:\n\nRight--DRESS.\n\n"+
+   "248. At this command, the two platoons will dress up on the alignment; "+
+   "the front-rank man on the right of the leading platoon, who finds himself "+
+   "opposite the instructor established on the direction of the guides, will "+
+   "place his breast lightly against the left arm of this officer.  The "+
+   "captain will direct the alignment from the right on the man on the "+
+   "opposite flank of the company.\n\n"+
+   "249. The company being aligned, the captain will command:\n\nFRONT.\n\n"+
+   "The instructor, seeing the company in line of battle, will command:\n\n"+
+   "Guides--POSTS.\n\n"+
+   "Forming to the RIGHT into line: since the first platoon must always rest "+
+   "on the right of the company, the second platoon will march past the "+
+   "first, and wheel to the right upon the ground which places it on the "+
+   "left of the first platoon in the new line.",
+   [
+     ["Left into line, wheel — MARCH","form_line_left",
+      "Each platoon wheels to the left on a fixed pivot (the left front-rank "+
+      "man) through the full 90°, coming fully onto the line of battle. "+
+      "Can be given from a halt (COL_HALT) or while marching (COL_MARCH). "+
+      "Par. 265–268: if given while marching, the wheel is completed at the "+
+      "march and the company continues forward in line."],
+     ["Right into line, wheel — MARCH","form_line_right",
+      "The 1st platoon wheels to the right on a fixed pivot through the full "+
+      "90°.  The 2d platoon stands fast while the 1st wheels and advances "+
+      "clear, then marches straight forward to its own wheel ground and "+
+      "wheels right — so the company forms without inversion, with the 1st "+
+      "platoon always on the right of the line.  Can be given from a halt "+
+      "or while marching."],
+     ["Platoon — HALT","form_halt",
+      "The instructor gives this command when the marching flank of each "+
+      "platoon is three paces from the line (par. 245) — in the simulation "+
+      "the platoons have already completed the full wheel and are on the line. "+
+      "The chief of the 2d platoon (1L) returns to the rank of file closers, "+
+      "passing around the LEFT of his platoon; the captain moves rapidly to "+
+      "the point where the right of the company will rest in line."],
+     ["Right — DRESS","form_dress",
+      "The company dresses on the alignment, closing any remaining gaps "+
+      "and completing the line of battle."],
+     ["FRONT","form_front",
+      "Eyes front — the alignment is complete."],
+     ["Guides — POSTS","guides_posts",
+      "The captain stands at the right of the front rank, the covering "+
+      "sergeant (1S) falls back to the rear rank behind him, and the guides "+
+      "and chiefs return to their posts among the file closers."],
+     ["On the right into line (column marching, right in front)",
+      "online_right_prep",
+      "Used instead of the wheel when the column is MARCHING right in front "+
+      "and the line is to form facing to the right. The captain sends the "+
+      "2d lieutenant ahead as a marker for the point where the right flank "+
+      "of the line will rest — well in advance, at least ten paces beyond "+
+      "the column's right flank — and commands guide right; the column "+
+      "marches on until its head comes abreast the marker."],
+     ["Right turn","online_right_turn",
+      "The first group of four wheels 90 degrees to the right and marches "+
+      "on the line; each following four continues straight until just past "+
+      "the left of the four before it, then wheels in turn — the whole "+
+      "company forming successively to the left. The fours halt three paces "+
+      "from the line; the captain places himself on the right of the line "+
+      "of battle, and each guide posts himself immediately in front of "+
+      "where the left of his platoon will rest, facing the captain."],
+     ["Right — DRESS (on the captain)","online_right_dress",
+      "The company dresses the last three paces up onto the line, aligning "+
+      "on the captain at the right."],
+     ["Guides — POSTS (after On the right into line)","guides_posts",
+      "The covering sergeant covers the captain; the guides and the marker "+
+      "return to their places among the file closers. The company stands "+
+      "in line of battle facing to the right of its old direction of march."],
+     ["On the left into line (column marching or halted, left in front)",
+      "online_left_prep",
+      "The mirror of the movement above, for a column LEFT in front: the "+
+      "marker runs out to where the LEFT flank of the new line will rest, "+
+      "at least ten paces beyond the column's left flank, and the column "+
+      "comes up abreast."],
+     ["Left turn","online_right_turn",
+      "Each group of four wheels 90 degrees to the LEFT in succession, the "+
+      "company forming to the right of each preceding four; the fours halt "+
+      "three paces from the line. The captain places himself at the LEFT of "+
+      "the line beside the marker to direct the dress; the guides post in "+
+      "front of where the far flank of each platoon will rest."],
+     ["Left — DRESS (on the captain)","online_right_dress",
+      "The company dresses the last three paces up onto the line, aligning "+
+      "on the captain at the left."],
+     ["Guides — POSTS (after On the left into line)","guides_posts",
+      "The captain crosses around the front of the company to his post on "+
+      "the right of the front rank; the covering sergeant covers him; the "+
+      "guides and the marker return to the file closers."]
+   ]]
+]],
+["LESSON VI", [
+  ["Article 1: To break into platoons, and to re-form the company",
+   "1. Break into platoons. 2. MARCH ... executed while marching, by the same "+
+   "principles as breaking into column at a halt ... (Not animated in this "+
+   "version.)", []],
+  ["Article 2: To break files to the rear, and to cause them to re-enter "+
+   "into line",
+   "1. Two files from left (or right). 2. To rear, MARCH ... (Not animated "+
+   "in this version.)", []],
+  ["Article 3: To march in column in route",
+   "1. Route step. 2. MARCH ... the men carry arms at will and are no longer "+
+   "required to keep the step ... (Not animated in this version.)", []],
+  ["Article 4: Countermarch",
+   "1. Company, right--FACE. 2. By file left. 3. MARCH ... the company "+
+   "reverses its direction on its own ground ... (Not animated in this "+
+   "version.)", []],
+  ["Article 5: Being in column by platoon, to form on the right (or left) "+
+   "into line of battle",
+   "1. On the right, into line. 2. Guide right ... (Not animated in this "+
+   "version.)", []]
+]]
+];
+
+const ORDER_DISPATCH = {
+  open_prep: m => m.odOpenPrep(),
+  open_order: m => m.odOpenOrder(),
+  open_march: m => m.odOpenMarch(),
+  open_front: m => m.odOpenFront(),
+  close_order: m => m.odCloseOrder(),
+  company_forward: m => m.odCompanyForward(),
+  line_march: m => m.odLineMarch(),
+  line_halt: m => m.odLineHalt(),
+  oblique_right: m => m.odOblique(true),
+  oblique_left: m => m.odOblique(false),
+  oblique_forward: m => m.odObliqueForward(),
+  right_face: m => m.odRightFace(),
+  left_face: m => m.odLeftFace(),
+  flank_march: m => m.odFlankMarch(),
+  by_file_left: m => m.odByFile(true),
+  by_file_right: m => m.odByFile(false),
+  flank_front: m => m.odFlankHaltFront(),
+  file_into_line_right: m => m.odFileIntoLine(true),
+  file_into_line_left: m => m.odFileIntoLine(false),
+  file_into_line_posts: m => m.odFileIntoLinePosts(),
+  flank_company_into_line: m => m.odFlankIntoLine(false),
+  flank_platoon_into_line: m => m.odFlankIntoLine(true),
+  break_prep: m => m.odBreakPrep(),
+  break_march_right: m => m.odBreakMarch(false),
+  break_march_left: m => m.odBreakMarch(true),
+  break_dress: m => m.odBreakDress(),
+  break_front: m => m.odBreakFront(),
+  break_forward_right: m => m.odBreakForward(false),
+  break_forward_left: m => m.odBreakForward(true),
+  col_march: m => m.odColMarch(),
+  col_left: m => m.odColChange(true),
+  col_right: m => m.odColChange(false),
+  col_halt: m => m.odColHalt(),
+  form_line_left: m => m.odFormLineWheel(true),
+  form_line_right: m => m.odFormLineWheel(false),
+  form_halt: m => m.odFormHalt(),
+  form_dress: m => m.odFormDress(),
+  form_front: m => m.odFormFront(),
+  online_right_prep: m => m.odOnLinePrep(true),
+  online_left_prep: m => m.odOnLinePrep(false),
+  online_right_turn: m => m.odOnLineTurn(),
+  online_right_dress: m => m.odOnLineDress(),
+  guides_posts: m => m.odGuidesPosts()
+};
+
+const STATE_LABEL = {
+  LINE_HALT: "In line of battle, at a halt",
+  OPEN_PREP: "In line — left guide posted on the left of the front rank",
+  OPEN_MARKED: "In line — rear-rank alignment marked",
+  OPEN_RANKS: "Ranks open",
+  OPEN_DONE: "Ranks open",
+  LINE_GUIDE: "In line of battle, marching",
+  LINE_MARCH: "Marching in line of battle",
+  OBLIQUE_MARCH: "Marching obliquely in line of battle",
+  FLANK_FACED: "Faced by the flank, files doubled (column of fours)",
+  FLANK_MARCH: "Marching by the flank in column of fours",
+  COL_READY: "In line — chiefs of platoon posted, ready to wheel",
+  COL_HALT: "In column by platoon, at a halt",
+  BREAK_HALTED: "Platoons halted three paces short — guides on the perpendicular",
+  BREAK_DRESSED: "Platoons dressed on their guides — awaiting FRONT",
+  COL_MARCH: "Column by platoon (march segment complete)",
+  FORM_WHEELED: "Wheeled onto the line — awaiting Platoon--HALT",
+  FORM_HALTED: "Platoons halted — captain at the point of direction",
+  FORM_DRESSED: "Dressed on the alignment — awaiting FRONT",
+  LINE_WHEELED: "In line of battle — guides not yet at their posts",
+  ONLINE_READY: "Head of column abreast the marker — awaiting Right turn",
+  ONLINE_HALTED: "Fours halted three paces from the line — captain at the right",
+  ONLINE_DRESSED: "Dressed on the captain — awaiting Guides—POSTS",
+  FILE_LINE_LEFT: "Formed on the left by file — captain and left guide posted at the left"
+};
+
+if(typeof module !== "undefined" && module.exports){
+  module.exports = { CompanyModel, Man, vec, add, sub, dot, dist, rotAbout,
+                     FW, RANKD, CLOSERD, OPEN_RANKD, MARCH_PACES, BOOK,
+                     ORDER_DISPATCH, STATE_LABEL };
+}
+/*MODEL-END*/
+
+// ---------------------------------------------------------------------------
+// GUI (browser only)
+// ---------------------------------------------------------------------------
+if(typeof window !== "undefined" && typeof document !== "undefined"){
+(function(){
+  const ROLE_FILL = { captain:"#FFD24D", lieutenant:"#FFB84D",
+                      sergeant:"#F08272", corporal:"#8FD693" };
+  const PVT_FILL = {1:"#7FB3E8", 2:"#AECDF0", 3:"#7FB3E8", 4:"#AECDF0"};
+  const PLT_RING = {1:"#16406E", 2:"#7A1F1B", null:"#555555"};
+  const ROLE_LONG = { captain:"Captain", lieutenant:"Lieutenant",
+                      sergeant:"Sergeant", corporal:"Corporal", private:"Private" };
+  const GRID = "#e3dccb", ARROW = "#b4a27a";
+
+  const cv = document.getElementById("cv");
+  const ctx = cv.getContext("2d");
+  const el = id => document.getElementById(id);
+
+  let model = new CompanyModel(20, true, false);
+  let view = [0, 0], zoom = 1, selId = null;
+  let arrows = [];
+  let anim = null;   // {t0, dur}
+  let dragging = null, dragMoved = false;
+
+  function resetView(){
+    view = [-(model.nFiles - 1) * FW / 2, 1];
+  }
+
+  function ppp(){ return 16 * zoom; }
+  function w2s(p){
+    const w = cv.clientWidth, h = cv.clientHeight;
+    return [(p[0] - view[0]) * ppp() + w/2, (p[1] - view[1]) * ppp() + h/2];
+  }
+  function s2w(x, y){
+    const w = cv.clientWidth, h = cv.clientHeight;
+    return [(x - w/2)/ppp() + view[0], (y - h/2)/ppp() + view[1]];
+  }
+
+  // ---------- text panel ----------
+  function showText(header, body, note, warn){
+    el("ptitle").textContent = header;
+    const t = el("ptext");
+    t.textContent = body.trim();
+    if(note){
+      const s = document.createElement("span");
+      s.className = "note";
+      s.textContent = "— In this simulation —\n" + note;
+      t.appendChild(s);
+    }
+    if(warn){
+      const s = document.createElement("span");
+      s.className = "warn";
+      s.textContent = warn;
+      t.appendChild(s);
+    }
+  }
+
+  // ---------- drill-book tree ----------
+  function buildTree(){
+    const tree = el("tree");
+    tree.innerHTML = "";
+    const about = document.createElement("details");
+    const asum = document.createElement("summary");
+    const abtn = document.createElement("button");
+    abtn.className = "artbtn"; abtn.textContent = "About / General rules";
+    abtn.onclick = e => { e.preventDefault();
+      showText("General Rules and Division of the School of the Company", TXT_ABOUT); };
+    asum.appendChild(abtn); about.appendChild(asum);
+    about.className = "lesson";
+    tree.appendChild(about);
+    for(const [lesson, arts] of BOOK){
+      const dl = document.createElement("details");
+      dl.className = "lesson";
+      const sl = document.createElement("summary");
+      sl.textContent = lesson;
+      dl.appendChild(sl);
+      for(const [title, casey, cmds] of arts){
+        const da = document.createElement("details");
+        da.className = "article";
+        const sa = document.createElement("summary");
+        const ab = document.createElement("button");
+        ab.className = "artbtn"; ab.textContent = title;
+        ab.onclick = e => { showText(title, casey); };
+        sa.appendChild(ab); da.appendChild(sa);
+        if(cmds.length){
+          for(const [label, key, note] of cmds){
+            const b = document.createElement("button");
+            b.className = "cmd" + (key ? "" : " textonly");
+            b.textContent = label;
+            b.onclick = () => {
+              if(!key){ showText(title, casey, note); return; }
+              runOrder(title, casey, label, key, note);
+            };
+            if(key) BTN_REGISTRY.push({ key: key, btn: b });
+            da.appendChild(b);
+          }
+        }else{
+          const b = document.createElement("button");
+          b.className = "cmd textonly";
+          b.textContent = "(text only — animation planned)";
+          b.onclick = () => showText(title, casey);
+          da.appendChild(b);
+        }
+        dl.appendChild(da);
+      }
+      tree.appendChild(dl);
+    }
+  }
+
+  // ---------- mobile drawers ----------
+  const isNarrow = () => window.matchMedia("(max-width:900px)").matches;
+  function closeDrawers(){
+    document.getElementById("book").classList.remove("open");
+    document.getElementById("panel").classList.remove("open");
+  }
+  el("btnBook").onclick = () => {
+    const b = document.getElementById("book");
+    const was = b.classList.contains("open");
+    closeDrawers();
+    if(!was) b.classList.add("open");
+  };
+  el("btnManual").onclick = () => {
+    const p = document.getElementById("panel");
+    const was = p.classList.contains("open");
+    closeDrawers();
+    if(!was) p.classList.add("open");
+  };
+
+  // ---------- contextual button availability ----------
+  // Every command button is greyed out whenever the order could not validly
+  // be given: wrong formation state, wrong flank/column facing, or a
+  // movement still in progress.
+  const BTN_REGISTRY = [];
+  function colRightInFront(m){
+    if(m.state !== "COL_HALT" && m.state !== "COL_MARCH") return null;
+    const c1 = centroid(m.platoonMembers(1).map(x => x.pos));
+    const c2 = centroid(m.platoonMembers(2).map(x => x.pos));
+    return dot(sub(c1, c2), vec(m.colDir)) > 0;
+  }
+  const inStates = (...ss) => m => ss.indexOf(m.state) !== -1;
+  const inFlank = inStates("FLANK_FACED", "FLANK_MARCH");
+  const inCol   = inStates("COL_HALT", "COL_MARCH");
+  const ENABLED_WHEN = {
+    open_prep:        inStates("LINE_HALT"),
+    open_order:       inStates("OPEN_PREP"),
+    open_march:       inStates("OPEN_MARKED"),
+    open_front:       inStates("OPEN_RANKS"),
+    close_order:      inStates("OPEN_RANKS", "OPEN_DONE"),
+    company_forward:  inStates("LINE_HALT"),
+    line_march:       inStates("LINE_MARCH"),
+    line_halt:        inStates("LINE_MARCH", "OBLIQUE_MARCH"),
+    oblique_right:    inStates("LINE_HALT", "LINE_MARCH", "OBLIQUE_MARCH"),
+    oblique_left:     inStates("LINE_HALT", "LINE_MARCH", "OBLIQUE_MARCH"),
+    oblique_forward:  inStates("OBLIQUE_MARCH"),
+    right_face:       inStates("LINE_HALT"),
+    left_face:        inStates("LINE_HALT"),
+    flank_march:      inFlank,
+    by_file_left:     inFlank,
+    by_file_right:    inFlank,
+    flank_front:      inFlank,
+    file_into_line_right: m => inFlank(m) && m._flankRight !== false,
+    file_into_line_left:  m => inFlank(m) && m._flankRight === false,
+    file_into_line_posts: inStates("FILE_LINE_LEFT"),
+    flank_company_into_line: inFlank,
+    flank_platoon_into_line: inFlank,
+    break_prep:        inStates("LINE_HALT"),
+    break_march_right: inStates("COL_READY"),
+    break_march_left:  inStates("COL_READY"),
+    break_dress:       inStates("BREAK_HALTED"),
+    break_front:       inStates("BREAK_DRESSED"),
+    break_forward_right: inStates("COL_READY", "LINE_MARCH"),
+    break_forward_left:  inStates("COL_READY", "LINE_MARCH"),
+    col_march:         inCol,
+    col_left:          inCol,
+    col_right:         inCol,
+    col_halt:          inStates("COL_MARCH"),
+    // The wheel into line is not used toward the side the column marches by
+    // (right in front -> On the right into line instead, and vice versa).
+    form_line_left:    m => inCol(m) && colRightInFront(m) === true,
+    form_line_right:   m => inCol(m) && colRightInFront(m) === false,
+    form_halt:         inStates("FORM_WHEELED"),
+    form_dress:        inStates("FORM_HALTED"),
+    form_front:        inStates("FORM_DRESSED"),
+    online_right_prep: m => inCol(m) && colRightInFront(m) === true,
+    online_left_prep:  m => inCol(m) && colRightInFront(m) === false,
+    online_right_turn: inStates("ONLINE_READY"),
+    online_right_dress: inStates("ONLINE_HALTED"),
+    guides_posts:      inStates("LINE_WHEELED", "ONLINE_DRESSED")
+  };
+  function refreshButtons(){
+    const busy = !!anim;
+    for(const { key, btn } of BTN_REGISTRY){
+      const p = ENABLED_WHEN[key];
+      btn.disabled = busy || (p ? !p(model) : false);
+    }
+  }
+
+  // ---------- orders & animation ----------
+  function runOrder(title, casey, label, key, note){
+    if(isNarrow()) closeDrawers();
+    if(anim){
+      showText(title, casey, note,
+        "A movement is still in progress — wait for it to finish.");
+      return;
+    }
+    const err = ORDER_DISPATCH[key](model);
+    if(err){
+      showText(title, casey, note, "ORDER NOT TAKEN: " + err);
+      updateState();
+      return;
+    }
+    showText(title + " — " + label, casey, note);
+    if(!el("inArrows").checked) arrows = [];
+    const moving = model.menArr().filter(m => m.path);
+    for(const m of moving) arrows.push(m.path.slice());
+    if(moving.length){
+      const maxLen = Math.max(...moving.map(m => m.length));
+      const speed = parseFloat(el("inSpeed").value);
+      anim = { t0: performance.now(),
+               dur: Math.max(600, maxLen / Math.max(0.5, speed) * 1000),
+               perMan: !!model._perManAnim,
+               maxLen: maxLen };
+      model._perManAnim = false;
+    }
+    updateState();
+  }
+
+  function updateState(){
+    refreshButtons();
+    const s = STATE_LABEL[model.state] || model.state;
+    const hd = ((model.heading * 180/Math.PI) + 90 + 360) % 360;
+    const comp = ["N","NE","E","SE","S","SW","W","NW"][
+      Math.floor(((hd + 22.5) % 360)/45)];
+    el("stateLbl").textContent = "Formation: " + s + "  |  Front: " + comp;
+  }
+
+  // ---------- drawing ----------
+  function draw(){
+    const rb = document.getElementById("readyBadge");
+    if(anim){
+      if(rb.textContent !== "MOVING\u2026"){
+        rb.textContent = "MOVING\u2026";
+        rb.style.background = "#f6dfae"; rb.style.color = "#7a5a1a";
+      }
+    } else if(rb.textContent !== "READY"){
+      rb.textContent = "READY";
+      rb.style.background = "#d9ecd0"; rb.style.color = "#2c6b2f";
+    }
+    const w = cv.clientWidth, h = cv.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    if(cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+      cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    // animation progress
+    if(anim){
+      const f = Math.min(1, (performance.now() - anim.t0) / anim.dur);
+      const captMult = model._captSpeedMult || 1;
+      for(const m of model.men.values()){
+        if(!m.path) continue;
+        if(anim.perMan && m.length > 0){
+          const mult = (m.id === "capt" && captMult !== 1) ? captMult : 1;
+          m.pos = m.pointAtFraction(Math.min(1, f * anim.maxLen / m.length * mult));
+        } else {
+          const mult = (m.id === "capt" && captMult !== 1) ? captMult : 1;
+          m.pos = m.pointAtFraction(Math.min(1, f * mult));
+        }
+      }
+      if(f >= 1){ model.finish(); anim = null; updateState(); }
+    }
+
+    // follow camera
+    if(el("inFollow").checked){
+      const pts = model.menArr().map(m => m.pos);
+      let minx=Infinity,maxx=-Infinity,miny=Infinity,maxy=-Infinity;
+      for(const p of pts){
+        minx=Math.min(minx,p[0]); maxx=Math.max(maxx,p[0]);
+        miny=Math.min(miny,p[1]); maxy=Math.max(maxy,p[1]);
+      }
+      const tx=(minx+maxx)/2, ty=(miny+maxy)/2;
+      view[0] += (tx - view[0]) * 0.12;
+      view[1] += (ty - view[1]) * 0.12;
+    }
+
+    const P = ppp();
+    // grid every 5 paces
+    ctx.strokeStyle = GRID; ctx.lineWidth = 1;
+    const step = 5 * P;
+    const ox = ((-view[0]*P + w/2) % step + step) % step;
+    const oy = ((-view[1]*P + h/2) % step + step) % step;
+    ctx.beginPath();
+    for(let x = ox; x < w; x += step){ ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+    for(let y = oy; y < h; y += step){ ctx.moveTo(0, y); ctx.lineTo(w, y); }
+    ctx.stroke();
+
+    // movement arrows
+    ctx.strokeStyle = ARROW; ctx.lineWidth = 1.4;
+    ctx.setLineDash([5, 4]);
+    for(const path of arrows){
+      if(path.length < 2) continue;
+      ctx.beginPath();
+      let p = w2s(path[0]);
+      ctx.moveTo(p[0], p[1]);
+      for(let i = 1; i < path.length; i++){
+        p = w2s(path[i]); ctx.lineTo(p[0], p[1]);
+      }
+      ctx.stroke();
+      // arrowhead
+      const a = w2s(path[path.length-2]), b = w2s(path[path.length-1]);
+      const ang = Math.atan2(b[1]-a[1], b[0]-a[0]);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(b[0], b[1]);
+      ctx.lineTo(b[0] - 8*Math.cos(ang - 0.4), b[1] - 8*Math.sin(ang - 0.4));
+      ctx.moveTo(b[0], b[1]);
+      ctx.lineTo(b[0] - 8*Math.cos(ang + 0.4), b[1] - 8*Math.sin(ang + 0.4));
+      ctx.stroke();
+      ctx.setLineDash([5, 4]);
+    }
+    ctx.setLineDash([]);
+
+    // the men
+    const r = 0.42 * P;
+    const fs = Math.max(6, r * 0.85);
+    ctx.font = "bold " + fs + "px Georgia, serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for(const id of model.order){
+      const m = model.men.get(id);
+      const [sx, sy] = w2s(m.pos);
+      if(sx < -30 || sx > w+30 || sy < -30 || sy > h+30) continue;
+      const fill = m.role === "private" ? PVT_FILL[m.section || 1] : ROLE_FILL[m.role];
+      const ring = PLT_RING[m.platoon] || "#555";
+      if(id === selId){
+        ctx.strokeStyle = "#D97706"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(sx, sy, r + 3.5, 0, Math.PI*2); ctx.stroke();
+      }
+      // facing tick
+      const fv = vec(m.facing);
+      ctx.strokeStyle = ring; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx + fv[0]*r, sy + fv[1]*r);
+      ctx.lineTo(sx + fv[0]*(r + 0.3*P), sy + fv[1]*(r + 0.3*P));
+      ctx.stroke();
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = ring; ctx.lineWidth = id === selId ? 2.4 : 1.6;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI*2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#22221C";
+      ctx.fillText(m.label, sx, sy + 0.5);
+    }
+
+    // platoon / section labels: drawn LAST (on top), offset to the outer
+    // flanks so the moving circles never obscure them
+    if(el("inUnits").checked){
+      const lblFont = Math.max(9, P * 0.55);
+      for(const [p, name] of [[1, "1st Platoon"], [2, "2d Platoon"]]){
+        const ms = model.platoonMembers(p).filter(m =>
+          m.rank === "front" || m.rank === "rear");
+        if(!ms.length) continue;
+        const c = centroid(ms.map(m => m.pos));
+        const face = ms[0].facing;
+        // offset to the platoon's outer flank: 1st -> its right, 2d -> its left
+        const flank = vec(face + (p === 1 ? Math.PI/2 : -Math.PI/2));
+        let span = 0;
+        for(const m of ms) span = Math.max(span, Math.abs(dot(sub(m.pos, c),
+          vec(face + Math.PI/2))));
+        const lp = add(c, flank, span + 2.6);
+        const [sx, sy] = w2s(lp);
+        drawPill(name, sx, sy, lblFont, PLT_RING[p]);
+      }
+      const secFont = Math.max(8, P * 0.4);
+      for(let s = 1; s <= 4; s++){
+        const ms = model.menArr().filter(m => m.section === s);
+        if(!ms.length) continue;
+        const c = centroid(ms.map(m => m.pos));
+        const face = ms[0].facing;
+        const back = vec(face + Math.PI);
+        const lp = add(c, back, 2.6);
+        const [sx, sy] = w2s(lp);
+        drawPill("sec. " + s, sx, sy, secFont, "#7B6E4E");
+      }
+    }
+
+    requestAnimationFrame(draw);
+  }
+  function drawPill(text, x, y, fpx, color){
+    ctx.font = "bold " + fpx + "px Georgia, serif";
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = "rgba(252,250,243,0.82)";
+    ctx.strokeStyle = "rgba(180,162,122,0.7)";
+    ctx.lineWidth = 1;
+    const pad = 4, hh = fpx*0.75 + pad;
+    roundRect(x - tw/2 - pad, y - hh/2 - 1, tw + pad*2, hh + 2, 4);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, x, y);
+  }
+  function roundRect(x, y, w, h, r){
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ---------- interaction ----------
+  // Multi-pointer tracking: one finger pans (or taps to identify a man);
+  // two fingers pinch-zoom about their midpoint.
+  const ptrs = new Map();
+  let pinch0 = null;
+  cv.addEventListener("pointerdown", e => {
+    closeDrawers();
+    ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    cv.setPointerCapture(e.pointerId);
+    if(ptrs.size === 2){
+      const pts = [...ptrs.values()];
+      pinch0 = { d0: Math.hypot(pts[0][0]-pts[1][0], pts[0][1]-pts[1][1]) || 1,
+                 zoom0: zoom };
+      dragging = null; dragMoved = true;
+      cv.classList.remove("dragging");
+    } else if(ptrs.size === 1){
+      dragging = [e.clientX, e.clientY]; dragMoved = false;
+      cv.classList.add("dragging");
+    }
+  });
+  cv.addEventListener("pointermove", e => {
+    if(ptrs.has(e.pointerId)) ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    const rect2 = cv.getBoundingClientRect();
+    const [wx, wy] = s2w(e.clientX - rect2.left, e.clientY - rect2.top);
+    document.getElementById("coordDisplay").textContent =
+      "x: " + wx.toFixed(2) + "  y: " + wy.toFixed(2);
+    if(pinch0 && ptrs.size === 2){
+      const pts = [...ptrs.values()];
+      const d = Math.hypot(pts[0][0]-pts[1][0], pts[0][1]-pts[1][1]) || 1;
+      const midX = (pts[0][0]+pts[1][0])/2 - rect2.left;
+      const midY = (pts[0][1]+pts[1][1])/2 - rect2.top;
+      const before = s2w(midX, midY);
+      zoom = Math.min(2.2, Math.max(0.4, pinch0.zoom0 * d / pinch0.d0));
+      el("inZoom").value = zoom;
+      const after = s2w(midX, midY);
+      view[0] += before[0] - after[0];
+      view[1] += before[1] - after[1];
+      el("inFollow").checked = false;
+      return;
+    }
+    if(!dragging || ptrs.size > 1) return;
+    const dx = e.clientX - dragging[0], dy = e.clientY - dragging[1];
+    if(Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+    if(dragMoved){
+      view[0] -= dx / ppp(); view[1] -= dy / ppp();
+      el("inFollow").checked = false;
+      dragging = [e.clientX, e.clientY];
+    }
+  });
+  cv.addEventListener("pointercancel", e => {
+    ptrs.delete(e.pointerId);
+    if(ptrs.size < 2) pinch0 = null;
+    if(ptrs.size === 0){ dragging = null; cv.classList.remove("dragging"); }
+  });
+  cv.addEventListener("pointerup", e => {
+    ptrs.delete(e.pointerId);
+    if(ptrs.size < 2) pinch0 = null;
+    cv.classList.remove("dragging");
+    if(dragging && !dragMoved){
+      const rect = cv.getBoundingClientRect();
+      const wpt = s2w(e.clientX - rect.left, e.clientY - rect.top);
+      let best = null, bestD = 0.8;
+      for(const m of model.men.values()){
+        const d = dist(m.pos, wpt);
+        if(d < bestD){ bestD = d; best = m; }
+      }
+      selId = best ? best.id : null;
+      if(best){
+        const plt = best.platoon === 1 ? "1st Platoon"
+                  : best.platoon === 2 ? "2d Platoon" : "";
+        showText(best.label + "  (" + ROLE_LONG[best.role] + ")",
+                 best.desc + (plt ? "\n\n" + plt : ""));
+      }
+    }
+    dragging = null;
+  });
+  cv.addEventListener("wheel", e => {
+    e.preventDefault();
+    const nz = Math.min(2.2, Math.max(0.4, zoom * (e.deltaY < 0 ? 1.1 : 0.9)));
+    zoom = nz; el("inZoom").value = nz;
+  }, { passive: false });
+
+  el("inZoom").addEventListener("input", e => { zoom = parseFloat(e.target.value); });
+  function rebuild(){
+    anim = null; arrows = []; selId = null;
+    model.build(parseInt(el("inFiles").value) || 20,
+                el("inCpl8").checked, el("in3Lt").checked);
+    resetView(); updateState();
+  }
+  el("btnReset").onclick = rebuild;
+  el("inFiles").addEventListener("change", rebuild);
+  el("inCpl8").addEventListener("change", rebuild);
+  el("in3Lt").addEventListener("change", rebuild);
+
+  // ---------- boot ----------
+  buildTree();
+  resetView();
+  showText("Welcome", TXT_ABOUT);
+  updateState();
+  requestAnimationFrame(draw);
+})();
+}
+</script>
+</body>
+</html>
