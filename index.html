@@ -324,12 +324,12 @@ class CompanyModel{
 
     const center = files => -(files.reduce((a,b)=>a+b,0)/files.length) * FW;
     const range = (a,b) => { const r=[]; for(let i=a;i<b;i++) r.push(i); return r; };
-    const sec4Files = range(n1+s3, n), plt1Files = range(0, n1), plt2Files = range(n1, n);
+    const plt1Files = range(0, n1), plt2Files = range(n1, n);
 
     put(new Man("1L","1L","lieutenant",2,null,"closer",
       "First Lieutenant — file closer, opposite the centre of the 4th section "+
       "(Title First, par. 16). Chief of the 2d platoon when the company breaks "+
-      "into platoons."), center(sec4Files), CLOSERD);
+      "into platoons."), fx(this.lt1Fi()), CLOSERD);
     put(new Man("2L","2L","lieutenant",1,null,"closer",
       "Second Lieutenant — file closer, opposite the centre of the 1st platoon "+
       "(Title First, par. 17)."), center(plt1Files), CLOSERD);
@@ -355,6 +355,19 @@ class CompanyModel{
 
   F(){ return vec(this.heading); }
   menArr(){ return Array.from(this.men.values()); }
+  // 1st Lieutenant's file-closer post: opposite the centre of the 4th
+  // section (Title First, par. 16). At company sizes where that centre
+  // falls exactly on the 2d Sergeant's post (opposite the second file
+  // from the left, par. 19 — happens at 12-15 files), the lieutenant
+  // takes post one file to the right so the two do not share a spot.
+  lt1Fi(){
+    const fi = (this.n1 + this.s3 + this.nFiles - 1)/2;
+    return Math.abs(fi - (this.nFiles - 2)) < 0.5 ? fi - 1 : fi;
+  }
+  // How far (in files, toward the company's right) the post above is
+  // shifted off the exact centre of the 4th section: 0 normally, 1 when
+  // avoiding the 2d Sergeant. Used by the centroid-based post computations.
+  lt1Shift(){ return (this.n1 + this.s3 + this.nFiles - 1)/2 - this.lt1Fi(); }
   extremeFrontMan(platoon, dir){
     let best = null, bestD = -Infinity;
     for(const m of this.men.values())
@@ -810,7 +823,7 @@ class CompanyModel{
     // For left-face this also returns 2S from the head of the column.
     const post = fi => add(add(O, Lv, fi*FW), B, CLOSERD);
     const posts = {
-      "1L": post((n1 + s3 + n - 1)/2), "2L": post((n1 - 1)/2),
+      "1L": post(this.lt1Fi()), "2L": post((n1 - 1)/2),
       "2S": post(n - 2), "3S": post(n1 + 1), "4S": post(n1 - 2), "5S": post(1)
     };
     if(this.men.has("3L")) posts["3L"] = post((n1 + n - 1)/2);
@@ -970,7 +983,7 @@ class CompanyModel{
     const O_C1 = add(captFinal, D, (onRight ? 1 : n) * FW);
     const Lline = vec(h - Math.PI/2);                 // left along the new line
     const postFi = {
-      "1L": (n1 + s3 + n - 1)/2, "2L": (n1 - 1)/2,
+      "1L": this.lt1Fi(), "2L": (n1 - 1)/2,
       "3S": n1 + 1, "4S": n1 - 2, "5S": 1
     };
     if(onRight) postFi["2S"] = n - 2;   // left variant: 2S is the head guide
@@ -1145,7 +1158,7 @@ class CompanyModel{
       const other = this.men.get(onRight ? "2S" : "1S");
       movers.push([other, 0, n + 1]);
       movers.push([this.men.get("capt"), 2, (n + 1)/2]);
-      const postFi = { "1L": (n1 + this.s3 + n - 1)/2, "2L": (n1 - 1)/2,
+      const postFi = { "1L": this.lt1Fi(), "2L": (n1 - 1)/2,
                        "3S": n1 + 1, "4S": n1 - 2, "5S": 1 };
       if(this.men.has("3L")) postFi["3L"] = (n1 + n - 1)/2;
       for(const id in postFi)
@@ -1301,8 +1314,8 @@ class CompanyModel{
     // perpendicular with the pivot man who has faced (178/180).
     for(const p of [1,2]){
       const marker = add(g.pivots[p], g.perpDir, (g.nP[p] + 2) * FW);
+      const p0 = chiefs[p].pos.slice();
       chiefs[p].setTimedPath(samplePath(t => {
-        const p0 = chiefs[p]._bm0 || (chiefs[p]._bm0 = chiefs[p].pos.slice());
         const s = Math.min(1, t / 0.5);
         return [p0[0] + (marker[0]-p0[0])*s, p0[1] + (marker[1]-p0[1])*s];
       }, 60));
@@ -1604,7 +1617,11 @@ class CompanyModel{
 
     // The 1st platoon must always rest on the RIGHT of the line of battle.
     // Adjust the trailing platoon's finals to sit correctly beside the leading platoon.
-    const frIds = p => this.platoonMembers(p).filter(m => m.rank === "front").map(m => m.id);
+    // 1S is excluded from the front-rank ranges: he stands at the extra flank
+    // spot (the captain's vacated place) outside the platoon front proper,
+    // and would otherwise skew the platoon edges by one pace.
+    const frIds = p => this.platoonMembers(p).filter(m =>
+      m.rank === "front" && m.id !== "1S").map(m => m.id);
     const sLead  = frIds(lead).map(i => dot(finals.get(i), Rv));
     const dLead  = Math.min(...frIds(lead).map(i => dot(finals.get(i), F)));
     const sTrail = frIds(trail).map(i => dot(finals.get(i), Rv));
@@ -1658,7 +1675,7 @@ class CompanyModel{
       let trailMaxF_preWheel = -Infinity;
       for(const [, pw] of preW)
         trailMaxF_preWheel = Math.max(trailMaxF_preWheel, dot(pw, F));
-      const clearAdv = Math.max(0, trailMaxF_preWheel + 2.0 - leadMinF_afterWheel) + 1.0;
+      clearAdv = Math.max(0, trailMaxF_preWheel + 2.0 - leadMinF_afterWheel) + 1.0;
 
       let leadFrontF = -Infinity;
       for(const m of this.platoonMembers(lead))
@@ -1672,7 +1689,7 @@ class CompanyModel{
           trailFrontF = Math.max(trailFrontF,
             dot(rotAbout(pw, trailPivotFinal, turn), F));
         }
-      const trailAlignAdv = leadFrontF - trailFrontF;
+      trailAlignAdv = leadFrontF - trailFrontF;
 
       // Lead: wheel [0..0.20] at 2x speed, advance in F [0.20..0.55], hold [0.55..1.0]
       for(const m of this.platoonMembers(lead)){
@@ -1756,6 +1773,18 @@ class CompanyModel{
         const full90 = rotAbout(pw, trailPivotFinal, turn);
         fullFinals.set(m.id, add(full90, F, trailAlignAdv));
       }
+    } else if(Math.abs(shiftF) > 1e-9 || Math.abs(shiftR) > 1e-9){
+      // Simultaneous wheel with unequal platoon fronts: the trailing
+      // platoon's pure rotation does not sit correctly beside the leading
+      // platoon (its line lands shiftF forward / shiftR to the side of its
+      // proper place). Apply the same alignment shift computed for `finals`
+      // above, so the DRESS step closes the gap and the company forms one
+      // continuous line — the 1st platoon always resting on the right.
+      for(const m of this.platoonMembers(trail)){
+        if(m.id === "1S" || m.id === "2S") continue;   // guides stand fast
+        const full90 = rotAbout(m.pos, pivots[trail], turn);
+        fullFinals.set(m.id, add(add(full90, F, shiftF), Rv, shiftR));
+      }
     }
 
     if(forwardTravel <= 1.5){
@@ -1799,7 +1828,7 @@ class CompanyModel{
     for(const m of this.men.values())
       if(m.section === 4 && m.rank === "front") s4.push(ff.get(m.id));
     const c4 = centroid(s4);
-    const post = add(c4, Bv, CLOSERD);
+    const post = add(add(c4, Rv, this.lt1Shift() * FW), Bv, CLOSERD);
     const postL = dot(post, Lv);
     const XY = (lat, dep) => [ Lv[0]*lat + Bv[0]*dep, Lv[1]*lat + Bv[1]*dep ];
     const w1 = XY(cL, cF);
@@ -2351,7 +2380,8 @@ class CompanyModel{
       const s4fin = s4.map(m => m.platoon === lead
         ? add(add(m.pos.slice(), D, nLead + Tf), U, nLead)
         : add(m.pos.slice(), D, W));
-      const post = add(centroid(s4fin), D, -CLOSERD);
+      const post = add(add(centroid(s4fin),
+        vec(this.colDir + Math.PI/2), this.lt1Shift() * FW), D, -CLOSERD);
       runLegs(lt, [lt.pos.slice(), post], 0,
               Math.max(1, dist(lt.pos, post)/W + 0.01));
       lt.rank = "closer";
@@ -2403,16 +2433,21 @@ class CompanyModel{
         if(!rightMan || dot(m.pos, Rv) > dot(rightMan.pos, Rv)) rightMan = m;
         if(!leftMan  || dot(m.pos, Lv) > dot(leftMan.pos, Lv))  leftMan  = m;
       }
-    // The captain's post is the right of the front rank (251/259). If he
-    // anchored the dress from the LEFT, he crosses around the front of the
-    // company; otherwise he stands fast.
-    let captPost = capt.pos.slice();
-    if(dot(capt.pos, Rv) < dot(rightMan.pos, Rv) + 0.3){
-      captPost = add(rightMan.pos, Rv, FW);
+    // The captain's post is the right of the front rank (251/259), one
+    // pace beyond the right-flank man. If he anchored the dress from the
+    // LEFT, he crosses around the front of the company; if he stands off
+    // his post on the right (e.g. after anchoring a dress from beyond the
+    // flank), he simply steps to it; otherwise he stands fast.
+    let captPost = add(rightMan.pos, Rv, FW);
+    if(dist(capt.pos, captPost) < 0.05){
+      captPost = capt.pos.slice();
+    } else if(dot(capt.pos, Rv) < dot(rightMan.pos, Rv) + 0.3){
       const wp1 = add(capt.pos, F, 2);
       const wp2 = add(captPost, F, 2);
       capt.setPath([wp1, wp2, captPost]);
       this._captSpeedMult = 1.5;
+    } else {
+      capt.setPath([captPost]);
     }
     // 1S covers the captain (251).
     const cover = add(captPost, B, RANKD);
@@ -2435,11 +2470,11 @@ class CompanyModel{
              add(add(rightMan.pos, Lv, ((this.n1 - 1)/2) * FW), B, CLOSERD),
              false);
     const lt = this.men.get("1L");
-    if(dist(lt.pos, add(centroid(this.menArr().filter(m =>
-        m.rank === "front" && m.section === 4).map(m => m.pos)), B, CLOSERD)) > 1.5){
+    {
       const ms = this.menArr().filter(m => m.rank === "front" && m.section === 4);
-      const cc = centroid(ms.map(m => m.pos));
-      lt.setPath([add(cc, B, CLOSERD)]);
+      const cc = add(centroid(ms.map(m => m.pos)), Rv, this.lt1Shift() * FW);
+      const ltPost = add(cc, B, CLOSERD);
+      if(dist(lt.pos, ltPost) > 1.5) lt.setPath([ltPost]);
     }
     lt.rank = "closer";
     this.faceAll(h);
@@ -2451,6 +2486,10 @@ class CompanyModel{
 // The drill book: Casey's text + command tree
 // ---------------------------------------------------------------------------
 const TXT_ABOUT =
+"Pick a command from the drill book on the left.  Click any soldier to see "+
+"who he is.  Drag the field to pan; use the Zoom slider or the mouse wheel.";
+
+const TXT_RULES =
 "TITLE THIRD — SCHOOL OF THE COMPANY.\n\n"+
 "1. Instruction by company will always precede that by battalion ... the "+
 "exercises of detail by company will be strictly adhered to, as well in "+
@@ -2468,9 +2507,7 @@ const TXT_ABOUT =
 "rank; the first sergeant in the rear rank covering the captain (the "+
 "'covering sergeant' or right guide); all other officers and sergeants as "+
 "file closers, two paces behind the rear rank; the corporals in the front "+
-"rank on the right and left of the platoons.\n\n"+
-"Pick a command from the drill book on the left.  Click any soldier to see "+
-"who he is.  Drag the field to pan; use the Zoom slider or the mouse wheel.";
+"rank on the right and left of the platoons.";
 
 const BOOK = [
 ["LESSON I", [
@@ -2892,7 +2929,7 @@ const BOOK = [
    "will march on the prolongation of the direction; each chief of platoon "+
    "will see that his platoon preserves its distance.  (Condensed.)",
    [
-     ["Column, forward — Guide left — MARCH","col_march",
+     ["Column, forward — Guide left (right) — MARCH","col_march",
       "The column of platoons advances "+MARCH_PACES+" paces, the platoons "+
       "preserving their wheeling distance.  (Click again to continue.)"]
    ]],
@@ -3248,21 +3285,31 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   function buildTree(){
     const tree = el("tree");
     tree.innerHTML = "";
-    const about = document.createElement("details");
-    const asum = document.createElement("summary");
-    const abtn = document.createElement("button");
-    abtn.className = "artbtn"; abtn.textContent = "About / General rules";
-    abtn.onclick = e => { e.preventDefault();
-      showText("General Rules and Division of the School of the Company", TXT_ABOUT); };
-    asum.appendChild(abtn); about.appendChild(asum);
-    about.className = "lesson";
-    tree.appendChild(about);
+    const mkTop = (label, header, text) => {
+      const d = document.createElement("details");
+      d.className = "lesson";
+      const s = document.createElement("summary");
+      const b = document.createElement("button");
+      b.className = "artbtn"; b.textContent = label;
+      b.onclick = e => { e.preventDefault(); showText(header, text); };
+      s.appendChild(b); d.appendChild(s);
+      tree.appendChild(d);
+    };
+    mkTop("About", "About", TXT_ABOUT);
+    mkTop("General rules",
+      "General Rules and Division of the School of the Company", TXT_RULES);
     for(const [lesson, arts] of BOOK){
       const dl = document.createElement("details");
       dl.className = "lesson";
       const sl = document.createElement("summary");
       sl.textContent = lesson;
       dl.appendChild(sl);
+      // When a lesson is opened, expand all of its articles so the command
+      // buttons are immediately visible.
+      dl.addEventListener("toggle", () => {
+        if(dl.open)
+          for(const da of dl.querySelectorAll("details.article")) da.open = true;
+      });
       for(const [title, casey, cmds] of arts){
         const da = document.createElement("details");
         da.className = "article";
