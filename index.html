@@ -184,6 +184,7 @@ const FW = 1.0;              // interval between files (stylized)
 const RANKD = 1.1;           // front-rank to rear-rank depth
 const CLOSERD = RANKD + 2.0; // file closers: two paces behind the rear rank
 const OPEN_RANKD = 4.0;      // opened ranks: rear rank 4 paces from front
+const ROUTE_RANKD = 2.2;     // route step: rear rank opens to a full pace (313)
 const MARCH_PACES = 12;
 
 function vec(h){ return [Math.cos(h), Math.sin(h)]; }
@@ -278,6 +279,11 @@ class CompanyModel{
     this.nFiles = n; this.n1 = n1; this.n2 = n2; this.s1 = s1; this.s3 = s3;
     this.heading = UP; this.colDir = UP; this.state = "LINE_HALT";
     this.men = new Map(); this.order = [];
+    // Lesson VI, Art. 2: stack of file-pairs broken to the rear
+    // (oldest first, newest last), and the flank they broke from.
+    this.brokenPairs = []; this._breakSide = null;
+    // Lesson VI, Art. 3: route-step disorder seed and section bookkeeping
+    this._routeTick = 0; this._sections = null; this._flankHybrid = false;
     const sectionOf = i => i < s1 ? 1 : i < n1 ? 2 : i < n1 + s3 ? 3 : 4;
     const fx = i => -i * FW;
     const put = (m, x, y) => { m.pos = [x, y]; this.men.set(m.id, m); this.order.push(m.id); };
@@ -467,14 +473,45 @@ class CompanyModel{
     this.state = "LINE_MARCH"; return null;
   }
   odLineMarch(){
-    if(this.state !== "LINE_MARCH")
+    if(this.state === "ROUTE_MARCH"){
+      // continue in the route step: the men keep no fixed dress — each
+      // marches at ease, so the small disorder is re-drawn every move (313)
+      this.clearPaths();
+      const F = this.F(), Rv = vec(this.heading + Math.PI/2);
+      const old = new Map();
+      for(const m of this.men.values()) old.set(m.id, this._routeJitVec(m, F, Rv));
+      this._routeTick++;
+      for(const m of this.men.values()){
+        const jo = old.get(m.id), jn = this._routeJitVec(m, F, Rv);
+        m.setPath([[m.pos[0] - jo[0] + jn[0] + F[0]*MARCH_PACES,
+                    m.pos[1] - jo[1] + jn[1] + F[1]*MARCH_PACES]]);
+      }
+      return null;
+    }
+    if(this.state !== "LINE_MARCH" && this.state !== "FILES_MARCH")
       return "'MARCH' here follows 'Company, forward.'";
     this.clearPaths();
     const F = this.F();
     for(const m of this.men.values()) m.setPath([add(m.pos, F, MARCH_PACES)]);
-    this.state = "LINE_MARCH"; return null;
+    // state unchanged: files broken to the rear (Lesson VI, Art. 2) march on
+    // with the company, preserving their distances (295).
+    return null;
   }
   odLineHalt(){
+    if(this.state === "ROUTE_MARCH"){
+      // 341: at the command halt the rear rank closes up (and the whole
+      // shoulders arms); the men re-take their dress.
+      this.clearPaths();
+      const F = this.F(), Rv = vec(this.heading + Math.PI/2);
+      const opens = m => m.rank === "rear" || m.rank === "cover" || m.rank === "closer";
+      for(const m of this.men.values()){
+        const j = this._routeJitVec(m, F, Rv);
+        const a = opens(m) ? (ROUTE_RANKD - RANKD) : 0;
+        const tgt = [m.pos[0] - j[0] + F[0]*a, m.pos[1] - j[1] + F[1]*a];
+        if(dist(m.pos, tgt) > 1e-9) m.setPath([tgt]);
+      }
+      this.state = "LINE_HALT"; return null;
+    }
     if(this.state !== "LINE_MARCH" && this.state !== "OBLIQUE_MARCH")
       return "The company is not marching in line of battle.";
     this.clearPaths();
@@ -596,6 +633,7 @@ class CompanyModel{
     this._flankCaptOrigin = captOrigPos;
     this._sgOrigin        = sgOrigPos;
     this._flankRight      = toRight;
+    this._flankHybrid     = false;
 
     // Rank-and-file (excludes capt and 1S, handled separately)
     const rankAndFile = this.menArr().filter(m =>
@@ -714,13 +752,15 @@ class CompanyModel{
   odRightFace(){ return this._odFlankFace(true); }
   odLeftFace(){  return this._odFlankFace(false); }
   odFlankMarch(){
-    if(this.state !== "FLANK_FACED" && this.state !== "FLANK_MARCH")
+    if(this.state !== "FLANK_FACED" && this.state !== "FLANK_MARCH" &&
+       this.state !== "FLANK_2" && this.state !== "FLANK_1")
       return "'Forward--MARCH' here follows 'Company, right (or left)--FACE.'";
     this.clearPaths();
     this._captSpeedMult = 1;
     const D = vec(this.colDir);
     for(const m of this.men.values()) m.setPath([add(m.pos, D, MARCH_PACES)]);
-    this.state = "FLANK_MARCH"; return null;
+    if(this.state === "FLANK_FACED") this.state = "FLANK_MARCH";
+    return null;
   }
   odByFile(left){
     if(this.state !== "FLANK_MARCH" && this.state !== "FLANK_FACED")
@@ -1490,12 +1530,14 @@ class CompanyModel{
     this.state = "COL_MARCH"; return null;
   }
   odColMarch(){
-    if(this.state !== "COL_HALT" && this.state !== "COL_MARCH")
+    if(this.state !== "COL_HALT" && this.state !== "COL_MARCH" &&
+       this.state !== "SEC_MARCH")
       return "The company is not formed in column by platoon.";
     this.clearPaths();
     const D = vec(this.colDir);
     for(const m of this.men.values()) m.setPath([add(m.pos, D, MARCH_PACES)]);
-    this.state = "COL_MARCH"; return null;
+    if(this.state !== "SEC_MARCH") this.state = "COL_MARCH";
+    return null;
   }
   odColChange(left){
     if(this.state !== "COL_MARCH" && this.state !== "COL_HALT")
@@ -2480,6 +2522,836 @@ class CompanyModel{
     this.faceAll(h);
     this.state = "LINE_HALT"; return null;
   }
+
+  // ------- Lesson VI, Art. 2: to break files to the rear, and to cause -----
+  // ------- them to re-enter into line (294-310) -----------------------------
+  // Files are broken in PAIRS from one flank of the marching company. Each
+  // pair (four men) forms a single rank covering the first through fourth
+  // files from that flank of the remaining company (295) — the outer file's
+  // men on the 1st and 3rd, the inner file's on the 2d and 4th. Successive
+  // pairs stack behind the company with the NEWEST nearest the rear rank:
+  // at each new break the earlier ranks gain two files inward and shorten
+  // the step to make room (297); files return into line in the reverse
+  // order, the others gaining two files back toward the flank (300).
+  // Simplifications: the momentary flank-facing and doubling of 295 are not
+  // shown (the men slide directly to their covering places); the broken
+  // ranks are drawn behind the file closers, who keep their posts (the
+  // flank guide of 305 has no separate representation in line of battle).
+  _remainingFront(){
+    const Rv = vec(this.heading + Math.PI/2);
+    return this.menArr().filter(m =>
+      m.rank === "front" && m.id !== "capt" && !m._broken)
+      .sort((a, b) => dot(a.pos, Rv) - dot(b.pos, Rv)); // leftmost first
+  }
+  _rearOf(frontMan){
+    const Rv = vec(this.heading + Math.PI/2);
+    const lat = dot(frontMan.pos, Rv);
+    let best = null, bd = Infinity;
+    for(const m of this.men.values())
+      if(m.rank === "rear" && !m._broken){
+        const d = Math.abs(dot(m.pos, Rv) - lat);
+        if(d < bd){ bd = d; best = m; }
+      }
+    return bd < 0.3 ? best : null;
+  }
+  canBreakFiles(left, pairs){
+    if(this.state !== "LINE_MARCH" && this.state !== "FILES_MARCH") return false;
+    if(this.brokenPairs.length && this._breakSide !== left) return false;
+    return this.nFiles - 2*this.brokenPairs.length - 2*pairs >= 6;
+  }
+  canFilesIntoLine(pairs){
+    return this.state === "FILES_MARCH" && this.brokenPairs.length >= pairs;
+  }
+  // Lay out every broken pair behind the flank-most four files of the
+  // remaining line: row 1 (newest pair) nearest the company, each row 1.6
+  // paces deeper, all behind the rank of file closers. `flankAnchor` is the
+  // FINAL front-rank position of the flank-most remaining file.
+  _layoutBrokenRows(F, Rv, flankAnchor){
+    const inward = this._breakSide ? 1 : -1;   // from the left flank, inward = right
+    const P = this.brokenPairs.length;
+    for(let k = 0; k < P; k++){
+      const rec = this.brokenPairs[k];
+      const row = P - k;                        // last pushed = row 1
+      const depth = CLOSERD + 1.6 * row;
+      const men = [rec.frontOuter, rec.frontInner, rec.rearOuter, rec.rearInner];
+      for(let j = 0; j < 4; j++){
+        const slot = add(add(flankAnchor, Rv, inward * j * FW), F, -depth);
+        this.men.get(men[j]).setPath([slot]);
+      }
+    }
+  }
+  odBreakFiles(left, pairs){
+    if(this.state !== "LINE_MARCH" && this.state !== "FILES_MARCH")
+      return "Files are broken to the rear while the company is marching in "+
+             "line of battle (Lesson III: Company, forward — MARCH first).";
+    if(this.brokenPairs.length && this._breakSide !== left)
+      return "The new files must always be broken from the same side as the "+
+             "first (298).";
+    if(this.nFiles - 2*this.brokenPairs.length - 2*pairs < 6)
+      return "That would reduce the front below six files (cf. 329) — cause "+
+             "files to re-enter the line first, or drill a larger company.";
+    this.clearPaths();
+    const F = this.F(), Rv = vec(this.heading + Math.PI/2);
+    // the flank-most remaining files, outermost first
+    const rem = this._remainingFront();
+    const take = left ? rem.slice(0, 2*pairs)
+                      : rem.slice(rem.length - 2*pairs).reverse();
+    for(let p = 0; p < pairs; p++){
+      const fOut = take[2*p], fIn = take[2*p + 1];
+      const rOut = this._rearOf(fOut), rIn = this._rearOf(fIn);
+      if(!rOut || !rIn) return "Could not resolve the rear-rank men of the flank files.";
+      const rec = { frontOuter: fOut.id, frontInner: fIn.id,
+                    rearOuter: rOut.id, rearInner: rIn.id };
+      for(const id of [rec.frontOuter, rec.frontInner, rec.rearOuter, rec.rearInner])
+        this.men.get(id)._broken = true;
+      this.brokenPairs.push(rec);           // outermost pushed first -> newest = innermost
+    }
+    this._breakSide = left;
+    // the rest of the company marches straight on
+    for(const m of this.men.values())
+      if(!m._broken) m.setPath([add(m.pos, F, MARCH_PACES)]);
+    // all broken ranks take (or shift to) their covering places behind the
+    // new flank — earlier ranks gaining two files inward and dropping back
+    const rem2 = this._remainingFront();
+    const flankMan = left ? rem2[0] : rem2[rem2.length - 1];
+    this._layoutBrokenRows(F, Rv, add(flankMan.pos, F, MARCH_PACES));
+    this.state = "FILES_MARCH";
+    return null;
+  }
+  odFilesIntoLine(pairs){
+    if(this.state !== "FILES_MARCH" || !this.brokenPairs.length)
+      return "No files are broken to the rear.";
+    if(this.brokenPairs.length < pairs)
+      return "Only " + (2*this.brokenPairs.length) +
+             " file(s) are broken to the rear.";
+    this.clearPaths();
+    const F = this.F(), Rv = vec(this.heading + Math.PI/2);
+    const left = this._breakSide;
+    const rem = this._remainingFront();
+    const flankMan = left ? rem[0] : rem[rem.length - 1];
+    const flankAnchor = add(flankMan.pos, F, MARCH_PACES);
+    const outward = left ? -1 : 1;
+    // the ranks nearest the company return first (300), each pair to its
+    // own two files beyond the present flank
+    for(let p = 0; p < pairs; p++){
+      const rec = this.brokenPairs.pop();
+      const latIn = outward * (2*p + 1) * FW, latOut = outward * (2*p + 2) * FW;
+      for(const [id, lat, dep] of [
+          [rec.frontInner, latIn, 0], [rec.frontOuter, latOut, 0],
+          [rec.rearInner, latIn, RANKD], [rec.rearOuter, latOut, RANKD]]){
+        const man = this.men.get(id);
+        man._broken = false;
+        man.setPath([add(add(flankAnchor, Rv, lat), F, -dep)]);
+      }
+    }
+    // the rest of the company marches straight on
+    for(const m of this.men.values())
+      if(!m._broken && !m.path) m.setPath([add(m.pos, F, MARCH_PACES)]);
+    // remaining broken ranks gain two files back toward the flank (300)
+    if(this.brokenPairs.length)
+      this._layoutBrokenRows(F, Rv,
+        add(flankAnchor, Rv, outward * 2 * pairs * FW));
+    if(this.brokenPairs.length){ this.state = "FILES_MARCH"; }
+    else { this._breakSide = null; this.state = "LINE_MARCH"; }
+    return null;
+  }
+
+  // ------- Lesson VI, Art. 3: the column in route (311-342) ----------------
+  // Route step: the rear rank opens to a full pace (313, stylized as
+  // ROUTE_RANKD), the file closers keep their two paces behind it, and the
+  // rank-and-file are no longer required to keep the step or the touch of
+  // elbows — shown as a small deterministic disorder that is re-drawn on
+  // every march segment and vanishes when the cadenced step is resumed.
+  _routeJit(id){
+    let h = (2166136261 ^ ((this._routeTick || 0) * 2654435761)) >>> 0;
+    for(let i = 0; i < id.length; i++)
+      h = Math.imul(h ^ id.charCodeAt(i), 16777619) >>> 0;
+    return [((h % 997)/997 - 0.5) * 0.36, (((h >>> 11) % 991)/991 - 0.5) * 0.7];
+  }
+  _routeJitVec(m, F, Rv){
+    if((m.rank !== "front" && m.rank !== "rear") || m.id === "capt") return [0, 0];
+    const j = this._routeJit(m.id);
+    return [Rv[0]*j[0] + F[0]*j[1], Rv[1]*j[0] + F[1]*j[1]];
+  }
+  _routeOff(){
+    this.clearPaths();
+    const F = this.F(), Rv = vec(this.heading + Math.PI/2);
+    this._routeTick = (this._routeTick || 0) + 1;
+    const opens = m => m.rank === "rear" || m.rank === "cover" || m.rank === "closer";
+    for(const m of this.men.values()){
+      const a = MARCH_PACES - (opens(m) ? (ROUTE_RANKD - RANKD) : 0);
+      const j = this._routeJitVec(m, F, Rv);
+      m.setPath([[m.pos[0] + F[0]*a + j[0], m.pos[1] + F[1]*a + j[1]]]);
+    }
+    this.state = "ROUTE_MARCH"; return null;
+  }
+  odRouteForward(){
+    if(this.state !== "LINE_HALT")
+      return "'Column, forward — Route step — MARCH' is given with the "+
+             "company at a halt, in line, as a subdivision of a column (312).";
+    return this._routeOff();
+  }
+  odRouteStep(){
+    if(this.state !== "LINE_MARCH")
+      return "'Route step — MARCH' here is given with the company marching "+
+             "in the cadenced pace (317).";
+    return this._routeOff();
+  }
+  odQuickTime(){
+    if(this.state !== "ROUTE_MARCH")
+      return "'Quick time — MARCH' is given with the company marching in "+
+             "the route step (315).";
+    this.clearPaths();
+    const F = this.F(), Rv = vec(this.heading + Math.PI/2);
+    const opens = m => m.rank === "rear" || m.rank === "cover" || m.rank === "closer";
+    for(const m of this.men.values()){
+      const j = this._routeJitVec(m, F, Rv);
+      const a = MARCH_PACES + (opens(m) ? (ROUTE_RANKD - RANKD) : 0);
+      m.setPath([[m.pos[0] - j[0] + F[0]*a, m.pos[1] - j[1] + F[1]*a]]);
+    }
+    this.state = "LINE_MARCH"; return null;
+  }
+
+  // 319-320: marching in the route step, pass to the flank march in the SAME
+  // direction: the company faces to the right (or left) in marching, files
+  // doubling, and the leading guide wheels at once — so the column of fours
+  // continues along the original line of march. The final formation is the
+  // exact doubled-column layout of Company, right (left)--FACE, rigidly
+  // wheeled back onto the old direction, so every flank evolution (by file,
+  // halt and front, into line by file, into line by company/platoon) can
+  // follow from it.
+  odRouteFlank(toRight){
+    if(this.state === "COL_MARCH") return this._routeFlankFromColumn(toRight);
+    if(this.state !== "ROUTE_MARCH")
+      return "'Company by the right (left) flank — By file left (right) — "+
+             "MARCH' is given here while marching in the route step (319), "+
+             "or in the column by platoon (330).";
+    this.clearPaths();
+    const h = this.heading, Fh = vec(h), Rv = vec(h + Math.PI/2);
+    // dressed base position of every man (route disorder and the opened
+    // rear-rank distance removed; the cadenced step is resumed in the turn)
+    const base = new Map();
+    for(const m of this.men.values()){
+      const j = this._routeJitVec(m, Fh, Rv);
+      let p = [m.pos[0] - j[0], m.pos[1] - j[1]];
+      if(m.rank === "rear" || m.rank === "cover" || m.rank === "closer")
+        p = add(p, Fh, ROUTE_RANKD - RANKD);
+      base.set(m.id, p);
+    }
+    const D0 = h + (toRight ? Math.PI/2 : -Math.PI/2);
+    const Dv = vec(D0);
+    const rankAndFile = this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") && m.id !== "capt" && m.id !== "1S");
+    let c1 = null;
+    for(const m of rankAndFile)
+      if(m.rank === "front" &&
+         (!c1 || dot(base.get(m.id), Rv) > dot(base.get(c1.id), Rv))) c1 = m;
+    const Or = base.get(c1.id);
+    const captOrig = base.get("capt");
+    const n = this.nFiles;
+    const face = new Map();          // the doubled layout, before the wheel
+    if(toRight){
+      face.set("1S", captOrig.slice());
+      face.set("capt", add(captOrig, vec(D0 + Math.PI/2), -FW));
+      for(const m of rankAndFile){
+        const i = Math.round(-dot(sub(base.get(m.id), Or), Dv) / FW);
+        m.fileI = i;
+        const k = Math.floor(i/2);
+        const lane = m.rank === "front" ? (i%2===0 ? 0 : 1) : (i%2===0 ? 2 : 3);
+        face.set(m.id, add(add(Or, Dv, -2*k*FW), vec(D0 + Math.PI/2), lane*FW));
+      }
+      for(const m of this.menArr()){
+        if(m.rank !== "closer") continue;
+        m.fileI = null;
+        const lat = dot(sub(base.get(m.id), Or), vec(D0 + Math.PI/2));
+        face.set(m.id, add(base.get(m.id), vec(D0 + Math.PI/2), 4.2*FW - lat));
+      }
+    } else {
+      const Ld = vec(D0 - Math.PI/2);
+      let c4 = null;
+      for(const m of rankAndFile)
+        if(m.rank === "front" &&
+           (!c4 || dot(base.get(m.id), Dv) > dot(base.get(c4.id), Dv))) c4 = m;
+      this._flankPivotId = c4.id;
+      const Ol = base.get(c4.id);
+      for(const m of rankAndFile){
+        const i = Math.round(dot(sub(base.get(m.id), Or), Dv) / FW);
+        m.fileI = i;
+        const k = Math.floor((n-1-i)/2), lp = (n-1-i)%2;
+        const lane = m.rank === "front" ? lp : lp + 2;
+        face.set(m.id, add(add(Ol, Dv, -2*k*FW), Ld, lane*FW));
+      }
+      const head2S = add(Ol, Dv, FW);
+      face.set("2S", head2S);
+      face.set("capt", add(head2S, Ld, -FW));
+      // 1S keeps his own (rear-rank) spot, as in Company, left--FACE
+      const Bv = vec(h + Math.PI);
+      for(const m of this.menArr()){
+        if(m.rank !== "closer" || m.id === "2S") continue;
+        m.fileI = null;
+        face.set(m.id, add(base.get(m.id), Bv, 2));
+      }
+      this.men.get("2S").fileI = null;
+    }
+    this.men.get("1S").fileI = null;
+    this.men.get("capt").fileI = null;
+    // Phase 1: the company faces and doubles as in Company, right (left)--
+    // FACE; Phase 2: the immediate by-file wheel — each four wheels 90
+    // degrees in succession over the same pivot arc, exactly as in the
+    // march by the flank (Lesson IV machinery), bringing the column back
+    // onto the original direction of march.
+    const turn = toRight ? -Math.PI/2 : Math.PI/2;
+    const ids = [...this.men.keys()];
+    const facedOf = id => face.get(id) || base.get(id);
+    const plans = this._wheelPlan(ids, facedOf, D0, turn);
+    const TF = 0.3;
+    const lerp = (p, q, u) => [p[0]+(q[0]-p[0])*u, p[1]+(q[1]-p[1])*u];
+    for(const m of this.men.values()){
+      const start = m.pos.slice(), fp = facedOf(m.id), plan = plans.get(m.id);
+      const fn = t => t < TF ? lerp(start, fp, t/TF)
+                             : plan(Math.min(1, (t - TF)/(1 - TF)));
+      m.setTimedPath(samplePath(fn, 80));
+    }
+    this._flankRight = toRight;
+    this._flankHybrid = false;
+    this._flankCaptOrigin = captOrig;
+    this._sgOrigin = base.get("1S");
+    this.colDir = h;
+    this.faceAll(h);
+    this._perManAnim = false;
+    this._captSpeedMult = 1;
+    this.state = "FLANK_MARCH"; return null;
+  }
+
+  // Per-man motion for the immediate by-file wheel, computed on a FACED
+  // column layout — the same pivot-arc machinery as the wheel in marching
+  // by the flank: lead to the wheeling point, sweep the common 90-degree
+  // arc in succession, then lead out on the new direction. The net effect
+  // is a rigid quarter-turn of the column plus a fixed advance, so the
+  // resulting formation is exact.
+  _wheelPlan(ids, facedOf, D0, turn, opts){
+    opts = opts || {};
+    const D = vec(D0), Rv = vec(D0 + Math.PI/2), NDv = vec(D0 + turn);
+    let H = null;
+    if(opts.H){ H = opts.H; }
+    else if(opts.headId){ H = facedOf(opts.headId); }
+    else {
+      let hA = -Infinity;
+      for(const id of ids){
+        const a = dot(facedOf(id), D);
+        if(a > hA){ hA = a; H = facedOf(id); }
+      }
+    }
+    const aM = new Map(), sM = new Map();
+    for(const id of ids){
+      aM.set(id, dot(sub(facedOf(id), H), D));
+      sM.set(id, dot(sub(facedOf(id), H), Rv));
+    }
+    const isCloser = id => this.men.get(id).fileI === null &&
+                           id !== "capt" && id !== "1S";
+    const PR = opts.PR !== undefined ? opts.PR : 2.0;
+    const LEAD = opts.LEAD !== undefined ? opts.LEAD : 2.0;
+    let sC;
+    if(opts.sC !== undefined){ sC = opts.sC; }
+    else {
+      const lanes = ids.map(id => sM.get(id));
+      const sInner = (turn < 0) ? Math.min(...lanes) : Math.max(...lanes);
+      sC = (turn < 0) ? sInner - PR : sInner + PR;
+    }
+    const Cc = add(add(H, D, LEAD), Rv, sC);
+    const depth = Math.max(...ids.map(id => -aM.get(id)));
+    const E = opts.E !== undefined ? opts.E : depth + 2.0;
+    let Rstar = 1;
+    for(const id of ids)
+      if(!isCloser(id)) Rstar = Math.max(Rstar, Math.abs(sM.get(id) - sC));
+    const Tstar = LEAD + E + Rstar * Math.abs(turn);
+    const plans = new Map();
+    for(const id of ids){
+      const a = aM.get(id), s = sM.get(id);
+      const d1 = LEAD - a, e = E + a;
+      const t1 = d1 / Tstar, t2 = (d1 + Rstar * Math.abs(turn)) / Tstar;
+      const arcStart = add(add(H, D, LEAD), Rv, s);
+      const arcEnd = rotAbout(arcStart, Cc, turn);
+      const p0 = facedOf(id);
+      plans.set(id, t => {
+        if(t <= t1) return add(p0, D, d1 * (t1 <= 0 ? 1 : Math.min(1, t/t1)));
+        if(t <= t2) return rotAbout(arcStart, Cc, turn * (t - t1)/(t2 - t1));
+        return add(arcEnd, NDv, e * Math.min(1, (t - t2)/(1 - t2)));
+      });
+    }
+    return plans;
+  }
+
+  // 330: the column by platoon, marching in route, passes to the flank
+  // march in the same direction: each platoon faces to the right (left) in
+  // marching, its files doubling, and wheels 90 degrees at its own pivot;
+  // the first file of each subdivision prolongs the direction and unites
+  // with the rear of the subdivision preceding, the 2d platoon closing up
+  // any remaining distance while the captain, the guides, and the file
+  // closers take the posts of a company that has faced. Both platoons
+  // wheel over lanes that coincide, so the 2d finishes directly behind the
+  // 1st. For the RIGHT flank this reproduces exactly the company's own
+  // faced column (all evolutions follow); for the LEFT, the 1st platoon
+  // still leads (330), a valid column in which files are not un-doubled.
+  _routeFlankFromColumn(toRight){
+    const C = this.colDir;
+    const D0 = C + (toRight ? Math.PI/2 : -Math.PI/2);
+    const turn = toRight ? -Math.PI/2 : Math.PI/2;
+    const Dv = vec(D0), Dfin = vec(C);
+    const RvC = vec(C + Math.PI/2);          // right of the column direction
+    const LaneV = vec(C + (toRight ? Math.PI/2 : -Math.PI/2));
+    this.clearPaths();
+    const n = this.nFiles, n1 = this.n1, n2 = n - n1;
+    const rf = this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") &&
+      m.id !== "capt" && m.id !== "1S" && m.platoon);
+    const plats = { 1: [], 2: [] };
+    for(const m of rf) plats[m.platoon].push(m);
+    // local file index from each platoon's right flank; company file index
+    const local = new Map();
+    for(const p of [1, 2]){
+      let maxLat = -Infinity;
+      for(const m of plats[p])
+        if(m.rank === "front") maxLat = Math.max(maxLat, dot(m.pos, RvC));
+      for(const m of plats[p]){
+        const j = Math.round((maxLat - dot(m.pos, RvC)) / FW);
+        local.set(m.id, j);
+        m.fileI = (p === 1 ? 0 : n1) + j;
+      }
+    }
+    // faced layout per platoon (Company, right (left)--FACE applied to
+    // each platoon line where it stands), file closers to the outer lane
+    const face = new Map();
+    const wheelIds = { 1: [], 2: [] };
+    for(const p of [1, 2]){
+      const cnt = p === 1 ? n1 : n2;
+      let O = null;
+      for(const m of plats[p])
+        if(m.rank === "front" &&
+           local.get(m.id) === (toRight ? 0 : cnt - 1)) O = m.pos;
+      const Lat0 = dot(O, RvC);
+      for(const m of plats[p]){
+        wheelIds[p].push(m.id);
+        const j = local.get(m.id);
+        let k, lp;
+        if(toRight){ k = Math.floor(j/2); lp = j % 2; }
+        else { const L = cnt - 1 - j; k = Math.floor(L/2); lp = L % 2; }
+        const lane = (m.rank === "front" ? 0 : 2) + lp;
+        face.set(m.id, add(add(O, Dv, -2*k*FW),
+                           vec(D0 + (toRight ? Math.PI/2 : -Math.PI/2)), lane*FW));
+      }
+      // this platoon's closers: to the flank lane, keeping their laterals
+      for(const m of this.menArr()){
+        if(m.rank !== "closer" || m.platoon !== p ||
+           m.id === "2S" || m.id === "1S") continue;
+        m.fileI = null;
+        wheelIds[p].push(m.id);
+        const latRel = Math.abs(Lat0 - dot(m.pos, RvC));
+        face.set(m.id, add(add(O, Dv, -latRel),
+                           vec(D0 + (toRight ? Math.PI/2 : -Math.PI/2)), 4.2*FW));
+      }
+    }
+    // each platoon wheels 90 degrees at its own pivot
+    const plans = {
+      1: this._wheelPlan(wheelIds[1], id => face.get(id), D0, turn),
+      2: this._wheelPlan(wheelIds[2], id => face.get(id), D0, turn)
+    };
+    const wheelEnd = id =>
+      (plans[1].has(id) ? plans[1] : plans[2]).get(id)(1);
+    // anchor: the head of the 1st platoon's column; the 2d platoon closes
+    // up so its head rank follows the 1st platoon's tail at full distance
+    let anchorId = null, headId2 = null;
+    for(const m of rf){
+      const j = local.get(m.id);
+      if(m.rank === "front" && m.platoon === 1 &&
+         j === (toRight ? 0 : n1 - 1)) anchorId = m.id;
+      if(m.rank === "front" && m.platoon === 2 &&
+         j === (toRight ? 0 : n2 - 1)) headId2 = m.id;
+    }
+    const anchorEnd = wheelEnd(anchorId);
+    const slotA2 = -2 * Math.ceil(n1 / 2);   // 2d platoon's head slot
+    const lag = dot(sub(wheelEnd(headId2), anchorEnd), Dfin) - slotA2;
+    const ADV3 = Math.max(2, lag + 2);
+    const drift = { 1: ADV3, 2: ADV3 - lag };
+    const TF = 0.25, TW = 0.8;
+    const lerp = (p, q, u) => [p[0]+(q[0]-p[0])*u, p[1]+(q[1]-p[1])*u];
+    for(const p of [1, 2])
+      for(const id of wheelIds[p]){
+        const m = this.men.get(id);
+        const start = m.pos.slice(), fp = face.get(id), plan = plans[p].get(id);
+        const we = plan(1), fin = add(we, Dfin, drift[p]);
+        const fn = t => t < TF ? lerp(start, fp, t/TF)
+                    : t < TW ? plan((t - TF)/(TW - TF))
+                    : lerp(we, fin, (t - TW)/(1 - TW));
+        m.setTimedPath(samplePath(fn, 80));
+      }
+    // the captain, the guides, and the 1st Lieutenant (returning to the
+    // file closers) take the posts of a company that has faced
+    const headGuide = toRight ? "1S" : "2S";
+    const tailGuide = toRight ? "2S" : "1S";
+    const hg = add(add(anchorEnd, Dfin, ADV3 + FW), LaneV, 0);
+    this.men.get(headGuide).setPath([hg]);
+    this.men.get("capt").setPath([add(hg, LaneV, -FW)]);
+    const lt1 = this.men.get("1L");
+    const off1L = toRight ? (this.lt1Fi() - n1) : (n - 1 - this.lt1Fi());
+    lt1.setPath([add(add(anchorEnd, Dfin, ADV3 + slotA2 - off1L*FW),
+                     LaneV, 4.2*FW)]);
+    lt1.rank = "closer"; lt1.fileI = null;
+    // the other guide takes his proper post: for the right flank, the 2d
+    // Sergeant's habitual closer station on the outer lane; for the left,
+    // the 1st Sergeant falls in at the tail of the column
+    if(toRight){
+      this.men.get(tailGuide).setPath([
+        add(add(anchorEnd, Dfin, ADV3 + slotA2 - (n - 2 - n1)*FW),
+            LaneV, 4.2*FW)]);
+    } else {
+      let minA = Infinity;
+      for(const p of [1, 2]) for(const id of wheelIds[p])
+        minA = Math.min(minA, dot(sub(wheelEnd(id), anchorEnd), Dfin) + drift[p]);
+      this.men.get(tailGuide).setPath([
+        add(add(anchorEnd, Dfin, minA - FW), LaneV, 1.1*FW)]);
+    }
+    this.men.get(tailGuide).fileI = null;
+    this.men.get(headGuide).fileI = null;
+    this.men.get("capt").fileI = null;
+    // restore the line-of-battle roles the column had suspended: the
+    // captain resumes his front-rank character, 1st Sergeant his post as
+    // covering sergeant, 2d Sergeant among the file closers
+    this.men.get("capt").rank = "front";
+    this.men.get("1S").rank = "cover";
+    this.men.get("2S").rank = "closer";
+    if(!toRight){
+      let c4 = null;
+      for(const m of rf) if(m.rank === "front" && m.fileI === n - 1) c4 = m;
+      this._flankPivotId = c4.id;
+    }
+    this._flankRight = toRight;
+    this._flankHybrid = !toRight;
+    this._flankCaptOrigin = add(hg, LaneV, -FW);
+    this._sgOrigin = hg;
+    this.colDir = C;
+    this.faceAll(C);
+    this._perManAnim = false;
+    this._captSpeedMult = 1;
+    this.state = "FLANK_MARCH"; return null;
+  }
+
+  // ------- Lesson VI, Art. 4: the countermarch (343-351) -------------------
+  // The company, at a halt as part of a column, faces to the right (left)
+  // WITHOUT doubling; the two guides post themselves on the flanks of the
+  // front rank and face about; the two leading files break to the rear
+  // (344) — which clears them to swing around the standing guide — and the
+  // captain conducts the first file. At MARCH the guides stand fast; every
+  // file wheels 180 degrees in succession over the same ground around the
+  // pivot guide and marches back along the front; when the leading file is
+  // opposite the far guide: Company — HALT — FRONT — Right — DRESS, and
+  // the front rank dresses in, enclosed between the two guides (345-349).
+  // The company thus ends on its own ground, faced about, the front rank
+  // still in front and the right flank still on the right. Simplifications:
+  // the guides are shown as the 1st and 2d Sergeants; the captain takes
+  // the app's line-of-battle post on the new right (349's column post
+  // before the centre is not shown); the countermarch of the column by
+  // platoon (350) is not yet animated.
+  odCountermarch(toRight){
+    if(this.state !== "LINE_HALT")
+      return "The countermarch is executed from a halt, in line, as part "+
+             "of a column (343).";
+    this.clearPaths();
+    const h = this.heading, F = vec(h), Rv = vec(h + Math.PI/2), B = vec(h + Math.PI);
+    const h2 = h + Math.PI;
+    const n = this.nFiles;
+    const D0 = h + (toRight ? Math.PI/2 : -Math.PI/2);
+    const turn = toRight ? -Math.PI : Math.PI;   // by file left / right, 180
+    // front-rank origin (file 0) and geometric file indices
+    const rankAndFile = this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") && m.id !== "capt" && m.id !== "1S");
+    let o0 = null;
+    for(const m of rankAndFile)
+      if(m.rank === "front" && (!o0 || dot(m.pos, Rv) > dot(o0.pos, Rv))) o0 = m;
+    const O0 = o0.pos.slice();
+    const lat0 = dot(O0, Rv);
+    const fi = new Map();
+    for(const m of rankAndFile)
+      fi.set(m.id, Math.round((lat0 - dot(m.pos, Rv)) / FW));
+    // guide posts on the flanks of the front rank, faced about (344)
+    const rgSpot = add(O0, Rv, FW);            // right of the front rank
+    const lgSpot = add(O0, Rv, -n*FW);         // left of the front rank
+    const pivotHead = toRight ? 0 : n - 1;     // the leading (first) file
+    const second = toRight ? 1 : n - 2;
+    // Phase-1 targets: everyone faces in place (files un-doubled: each
+    // file's rear man is already beside his leader); the two leading files
+    // step to the rear for room to swing around the pivot guide (344), and
+    // the captain places himself by the side of the first front-rank man.
+    const faced = new Map();
+    for(const m of rankAndFile){
+      const i = fi.get(m.id);
+      let p = m.pos.slice();
+      if(i === pivotHead || i === second) p = add(p, B, 1.3);
+      faced.set(m.id, p);
+    }
+    let headMan = null;
+    for(const m of rankAndFile)
+      if(m.rank === "front" && fi.get(m.id) === pivotHead) headMan = m;
+    const captLane = (toRight ? -1 : 1);       // outside the front rank
+    faced.set("capt", add(faced.get(headMan.id), vec(D0 + Math.PI/2), captLane*FW));
+    // the wheel: 180 degrees around a pivot one pace outside the pivot
+    // guide, the whole company following the leading file over the same
+    // ground (345), halting with the column above the new line
+    const wheelIds = [...rankAndFile.map(m => m.id), "capt"];
+    const savedFileI = new Map();
+    for(const id of wheelIds){ savedFileI.set(id, this.men.get(id).fileI); this.men.get(id).fileI = 0; }
+    const anchorH = toRight ? O0 : add(O0, Rv, -(n - 1)*FW);
+    const plans = this._wheelPlan(wheelIds, id => faced.get(id), D0, turn,
+      { H: anchorH, PR: 1.0, LEAD: 1.0, E: (n - 1)*FW,
+        sC: (turn < 0 ? -1 : 1) });
+    for(const id of wheelIds) this.men.get(id).fileI = savedFileI.get(id);
+    // Final: the exact inversion — every file on the same ground, faced
+    // about, the front rank enclosed between the two guides (349)
+    const newFront = i => add(O0, Rv, -(n - 1 - i)*FW);
+    const finals = new Map();
+    for(const m of rankAndFile){
+      const i = fi.get(m.id);
+      finals.set(m.id, m.rank === "front"
+        ? newFront(i) : add(newFront(i), F, RANKD));
+    }
+    finals.set("capt", add(newFront(0), Rv, -FW));
+    const T1 = 0.15, T2 = 0.85;
+    const lerp = (p, q, u) => [p[0]+(q[0]-p[0])*u, p[1]+(q[1]-p[1])*u];
+    for(const id of wheelIds){
+      const m = this.men.get(id);
+      const start = m.pos.slice(), fp = faced.get(id), plan = plans.get(id);
+      const we = plan(1), fin = finals.get(id);
+      const fn = t => t < T1 ? lerp(start, fp, t/T1)
+                  : t < T2 ? plan((t - T1)/(T2 - T1))
+                  : lerp(we, fin, (t - T2)/(1 - T2));
+      m.setTimedPath(samplePath(fn, 90));
+    }
+    // the guides: to the flanks of the front rank, standing fast through
+    // the wheel, then passing along the front rank to their proper places
+    // (345, 349): 1S to cover the captain, 2S among the file closers
+    const posts = fidx => add(newFront(fidx), F, CLOSERD);
+    const guideFin = {
+      "1S": add(finals.get("capt"), F, RANKD),
+      "2S": posts(n - 2)
+    };
+    const guideSpot = { "1S": rgSpot, "2S": lgSpot };
+    for(const id of ["1S", "2S"]){
+      const m = this.men.get(id);
+      const start = m.pos.slice(), spot = guideSpot[id], fin = guideFin[id];
+      const wp = add(fin, B, CLOSERD + 1.2);   // along the (new) front side
+      const fn = t => t < T1 ? lerp(start, spot, t/T1)
+                  : t < T2 ? spot
+                  : (t < T2 + 0.09 ? lerp(spot, wp, (t - T2)/0.09)
+                                   : lerp(wp, fin, (t - T2 - 0.09)/(1 - T2 - 0.09)));
+      m.setTimedPath(samplePath(fn, 90));
+    }
+    // the file closers pass around the flank away from the pivot to their
+    // habitual places behind the (new) rear rank
+    const sideDir = toRight ? -1 : 1;          // away from the pivot guide
+    const farLat = toRight ? -(n + 1.6) : 2.6;
+    const postFi = { "1L": this.lt1Fi(), "2L": (this.n1 - 1)/2,
+                     "3S": this.n1 + 1, "4S": this.n1 - 2, "5S": 1 };
+    if(this.men.has("3L")) postFi["3L"] = (this.n1 + n - 1)/2;
+    for(const id in postFi){
+      const m = this.men.get(id);
+      const start = m.pos.slice(), fin = posts(postFi[id]);
+      const W1 = add(add(O0, Rv, farLat), B, CLOSERD);
+      const W2 = add(add(O0, Rv, farLat), F, CLOSERD);
+      const fn = t => t < 0.42 ? start
+                  : t < 0.62 ? lerp(start, W1, (t - 0.42)/0.2)
+                  : t < 0.82 ? lerp(W1, W2, (t - 0.62)/0.2)
+                  : lerp(W2, fin, (t - 0.82)/0.18);
+      m.setTimedPath(samplePath(fn, 90));
+    }
+    for(const m of this.men.values()) m.fileI = null;
+    this.heading = h2;
+    this.faceAll(h2);
+    this._perManAnim = false;
+    this._captSpeedMult = 1;
+    this.state = "LINE_HALT"; return null;
+  }
+
+  // 331-339: un-doubling and doubling files in the flank march.
+  // Column of fours (FLANK_MARCH) <-> column of twos (FLANK_2, each file's
+  // front- and rear-rank man abreast) <-> single rank (FLANK_1). The
+  // captain and the guides keep their stations relative to the head of the
+  // column; the file closers close toward the narrower column and open out
+  // again on re-doubling.
+  _flankLaneV(){
+    return vec(this.colDir + ((this._flankRight !== false) ? Math.PI/2 : -Math.PI/2));
+  }
+  _flankOrd(i){ return (this._flankRight !== false) ? i : (this.nFiles - 1 - i); }
+  _flankHeadFront(){
+    for(const m of this.men.values())
+      if(m.rank === "front" && m.fileI !== null && this._flankOrd(m.fileI) === 0)
+        return m;
+    return null;
+  }
+  _flankRelayout(adv, closerShift, slotOf){
+    this.clearPaths();
+    const D = vec(this.colDir), Lv = this._flankLaneV();
+    const head = this._flankHeadFront();
+    const H = add(head.pos, D, adv);
+    for(const m of this.men.values()){
+      let tgt;
+      if(m.rank === "closer"){
+        // close toward the narrower column / open out again on doubling,
+        // each closer keeping his own station beyond the outer lane
+        tgt = add(add(m.pos, D, adv), Lv, -closerShift*FW);
+      } else if(m.fileI === null){
+        tgt = add(m.pos, D, adv);      // captain and guides keep station
+      } else {
+        const slot = slotOf(this._flankOrd(m.fileI), m.rank === "front");
+        tgt = add(add(H, D, -slot[0]*FW), Lv, slot[1]*FW);
+      }
+      if(dist(m.pos, tgt) > 1e-9) m.setPath([tgt]);
+    }
+    this._captSpeedMult = 1;
+    this._perManAnim = false;
+  }
+  odFlankUndouble2(){
+    if(this.state !== "FLANK_MARCH")
+      return "'In two ranks, undouble files' is given with the company "+
+             "marching by the flank in column of fours, the cadenced step "+
+             "resumed (331).";
+    if(this._flankHybrid)
+      return "The subdivisions marched by the flank in succession (330) — "+
+             "un-doubling is shown only for the company's own flank march. "+
+             "Halt, front, and face the company anew first.";
+    this._flankRelayout(MARCH_PACES, 2, (o, isFront) => [o, isFront ? 0 : 1]);
+    this.state = "FLANK_2"; return null;
+  }
+  odFlankUndouble1(){
+    if(this.state !== "FLANK_2")
+      return "'In one rank, undouble files' is given with the company "+
+             "marching by the flank in two ranks (334).";
+    // the column doubles in length: the head marches on while each file
+    // steps off as its distance is gained (335)
+    this._flankRelayout(MARCH_PACES + this.nFiles*FW, 1,
+      (o, isFront) => [2*o + (isFront ? 0 : 1), 0]);
+    this.state = "FLANK_1"; return null;
+  }
+  odFlankDouble2(){
+    if(this.state !== "FLANK_1")
+      return "'In two ranks, double files' is given with the company "+
+             "marching in single rank (336).";
+    this._flankRelayout(MARCH_PACES, -1, (o, isFront) => [o, isFront ? 0 : 1]);
+    this.state = "FLANK_2"; return null;
+  }
+  odFlankDouble4(){
+    if(this.state !== "FLANK_2")
+      return "'In four ranks, double files' is given with the company "+
+             "marching by the flank in two ranks (338).";
+    this._flankRelayout(MARCH_PACES, -2,
+      (o, isFront) => [2*Math.floor(o/2), (isFront ? 0 : 2) + o%2]);
+    this.state = "FLANK_MARCH"; return null;
+  }
+
+  // 321-328: the column by platoon (route step supposed), to break into
+  // sections and re-form platoons. The right section of each platoon leads,
+  // commanded by the captain and 1st Lieutenant; the left sections are
+  // commanded by the next subalterns or, in their absence, sergeants (323).
+  // Simplifications: the guides keep their column posts and the file
+  // closers their stations (the guide/rear-rank swaps and closing to one
+  // pace of 325 are not shown), and the inverse means for a column left in
+  // front are not distinguished.
+  odBreakSections(){
+    if(this.state !== "COL_MARCH")
+      return "'Break into sections' is given with the column by platoon on "+
+             "the march (in route, 324-326).";
+    if(this.n2 < 12)
+      return "Platoons are broken into sections only when they have a front "+
+             "of twelve files or more (322) — drill a company of 24 files "+
+             "or larger.";
+    this.clearPaths();
+    const D = vec(this.colDir), Rv = vec(this.colDir + Math.PI/2);
+    const rf = this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") && m.section);
+    const secMen = s => rf.filter(m => m.section === s);
+    const secFront = s => secMen(s).filter(m => m.rank === "front");
+    const frontDep = s => Math.max(...secFront(s).map(m => dot(m.pos, D)));
+    // directing flank = the guides' side of the column
+    const cen = centroid(rf.map(m => m.pos));
+    const gs = dot(sub(this.men.get("1S").pos, cen), Rv) >= 0 ? 1 : -1;
+    const edge = s => {
+      let b = -Infinity, v = 0;
+      for(const m of secFront(s)){
+        const l = dot(m.pos, Rv);
+        if(l*gs > b){ b = l*gs; v = l; }
+      }
+      return v;
+    };
+    const gap = Math.abs(frontDep(1) - frontDep(3)) / 2;
+    const ADV = Math.max(MARCH_PACES, gap + 4);
+    const ds = { 2: edge(1) - edge(2), 4: edge(3) - edge(4) };
+    const chief4 = this.men.has("3L") ? "3L" : "3S";
+    // anchor for restoring the left-section chiefs to their posts: the
+    // directing-flank front man of the 1st section marches straight
+    // throughout the column by section
+    let anchor = secFront(1)[0];
+    for(const m of secFront(1))
+      if(dot(m.pos, Rv)*gs > dot(anchor.pos, Rv)*gs) anchor = m;
+    this._sections = { gap: gap, ds: ds, chief4: chief4, anchorId: anchor.id,
+      off2L: sub(this.men.get("2L").pos, anchor.pos),
+      off4:  sub(this.men.get(chief4).pos, anchor.pos) };
+    // the trailing (left) sections oblique in behind their leading sections,
+    // aligning on the directing flank; everyone else marches straight on
+    const trailSet = new Set();
+    for(const t of [2, 4]) for(const m of secMen(t)) trailSet.add(m.id);
+    const chiefIds = { capt: 1, "1L": 3, "2L": 2 }; chiefIds[chief4] = 4;
+    for(const m of this.men.values()){
+      if(m.id in chiefIds) continue;
+      if(trailSet.has(m.id))
+        m.setPath([add(add(m.pos, D, ADV - gap), Rv, ds[m.section])]);
+      else
+        m.setPath([add(m.pos, D, ADV)]);
+    }
+    // each chief of section posts two paces before its centre (the app's
+    // column convention)
+    for(const id in chiefIds){
+      const s = chiefIds[id];
+      let c = add(centroid(secFront(s).map(m => m.pos)), D, ADV + 2);
+      if(s === 2 || s === 4) c = add(add(c, D, -gap), Rv, ds[s]);
+      this.men.get(id).setPath([c]);
+    }
+    this._captSpeedMult = 1;
+    this.state = "SEC_MARCH"; return null;
+  }
+  odFormPlatoons(){
+    if(this.state !== "SEC_MARCH" || !this._sections)
+      return "'Form platoons' is given with the column broken by section (327).";
+    this.clearPaths();
+    const S = this._sections;
+    const D = vec(this.colDir), Rv = vec(this.colDir + Math.PI/2);
+    const ADV = Math.max(MARCH_PACES, S.gap + 4);
+    const rf = this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") && m.section);
+    const finals = new Map();
+    const chiefSet = new Set(["capt", "1L", "2L", S.chief4]);
+    for(const m of this.men.values()){
+      if(chiefSet.has(m.id)) continue;
+      const t = m.section;
+      const f = (t === 2 || t === 4)
+        ? add(add(m.pos, D, ADV + S.gap), Rv, -S.ds[t])
+        : add(m.pos, D, ADV);
+      finals.set(m.id, f);
+      m.setPath([f]);
+    }
+    // the captain and 1st Lieutenant return before the centres of the
+    // re-formed platoons; the left-section chiefs return to their places
+    // as file closers (328)
+    for(const [id, p] of [["capt", 1], ["1L", 2]]){
+      const fr = rf.filter(m => m.platoon === p && m.rank === "front")
+        .map(m => finals.get(m.id));
+      this.men.get(id).setPath([add(centroid(fr), D, 2)]);
+    }
+    const anch = finals.get(S.anchorId);
+    this.men.get("2L").setPath([[anch[0] + S.off2L[0], anch[1] + S.off2L[1]]]);
+    this.men.get(S.chief4).setPath([[anch[0] + S.off4[0], anch[1] + S.off4[1]]]);
+    this._sections = null;
+    this._captSpeedMult = 1;
+    this.state = "COL_MARCH"; return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3101,6 +3973,16 @@ const BOOK = [
    "the moment it begins to oblique, the guide of the first remaining on "+
    "its right.",
    [
+     ["1. Company, forward. 2. MARCH  (from Lesson III)", "company_forward",
+      "Repeated here for convenience, so every movement of this lesson can "+
+      "be reached without leaving it: the halted company is put in march "+
+      "in line of battle (Lesson III). Follow with MARCH to advance, then "+
+      "break by platoon, break files to the rear (Art. 2), or take the "+
+      "route step (Art. 3)."],
+     ["MARCH  (continue the march)", "line_march",
+      "The company advances "+MARCH_PACES+" paces in line of battle — in "+
+      "quick time, in the route step, or with files broken to the rear, "+
+      "as the case may be. (Repeated from Lesson III for convenience.)"],
      ["1. Break into platoons. 2. MARCH (right in front)",
       "break_platoons_right",
       "Given while the company marches in line. The 1st platoon marches "+
@@ -3127,15 +4009,428 @@ const BOOK = [
    ]],
   ["Article 2: To break files to the rear, and to cause them to re-enter "+
    "into line",
-   "1. Two files from left (or right). 2. To rear, MARCH ... (Not animated "+
-   "in this version.)", []],
+   "294. The company being in march, and supposed to constitute a "+
+   "subdivision of a column, right (or left) in front, when the instructor "+
+   "shall wish to cause files to break off, he will give the order to the "+
+   "captain, who will immediately turn to his company, and command:\n\n"+
+   "1. Two files from left (or right) to rear. 2. MARCH.\n\n"+
+   "295. At the command march, the two files on the left (or right) of the "+
+   "company will face to the right (or left) and double; the others will "+
+   "continue to march straight forward. If the files are broken from the "+
+   "left, the men will immediately file to the left, so that the odd "+
+   "numbers will cover the first and third, and the even numbers, the "+
+   "second and fourth files, from that flank of the company. If the files "+
+   "are broken from the right, the men will immediately file to the right, "+
+   "so that the even numbers will cover the first and third, and the odd "+
+   "numbers, the second and fourth files from that flank of the company. "+
+   "The men will be careful not to lose their distances and to keep "+
+   "aligned.\n\n"+
+   "296. If the instructor should still wish to break two files from the "+
+   "same side, he will give the order to the captain, who will proceed as "+
+   "above directed.\n\n"+
+   "297. At the command march, given by the captain, the files already "+
+   "broken, advancing a little the outer shoulder, will gain the space of "+
+   "two files to the right, if the files are broken from the left, and to "+
+   "the left, if the files are broken from the right, shortening, at the "+
+   "same time, the step, in order to make room between themselves and the "+
+   "rear rank of the company for the files last ordered to the rear; the "+
+   "latter will break by the same commands, and in the same manner as the "+
+   "first. The men who double, should increase the length of the step, in "+
+   "order to prevent distances from being lost.\n\n"+
+   "298. The instructor may thus diminish the front of a company by "+
+   "breaking off successive groups of two files, but the new files must "+
+   "always be broken from the same side.\n\n"+
+   "299. The instructor, wishing to cause files broken off to return into "+
+   "line, will give the order to the captain, who will immediately "+
+   "command:\n\n1. Two files into line. 2. MARCH.\n\n"+
+   "300. At the command march, the first two files of those marching by "+
+   "the flank will return briskly into line, and the others will gain the "+
+   "space of two files by advancing the inner shoulder toward the flank to "+
+   "which they belong.\n\n"+
+   "301. The captain will turn to his company, to watch the observance of "+
+   "the principles which have just been prescribed.\n\n"+
+   "302. The instructor having caused groups of two files to break one "+
+   "after another, and to return again into line, will afterward cause two "+
+   "or three groups to break together, and for this purpose, will command: "+
+   "Four (or six) files from left (or right) to rear — MARCH. The files "+
+   "designated will face to the right (or left) and double, and will then "+
+   "immediately file into their proper places as indicated No. 295, taking "+
+   "care that the distances are preserved.\n\n"+
+   "303. The instructor will next order the captain to cause two or three "+
+   "groups to be brought into line at once, who, turning to the company, "+
+   "will command:\n\nFour (or six) files into line — MARCH.\n\n"+
+   "304. At the command march, the files designated will advance the inner "+
+   "shoulder, move up and form on the flank of the company by the shortest "+
+   "lines.\n\n"+
+   "305. As often as files shall break off to the rear, the guide on that "+
+   "flank will gradually close on the nearest front-rank man remaining in "+
+   "line, and he will also open out to make room for files ordered into "+
+   "line.\n\n"+
+   "306. The files which march in the rear are disposed in the following "+
+   "order: the left files as if the company was marching by the right "+
+   "flank, and the right files as if the company was marching by the left "+
+   "flank. Consequently, whenever there is on the right or left of a "+
+   "subdivision, a file which does not belong to a group, it will be "+
+   "broken singly.\n\n"+
+   "307. It is necessary to the preservation of distances in column, that "+
+   "the men should be habituated in the schools of detail to execute the "+
+   "movements of this article with precision.\n\n"+
+   "308. If the new files broken to the rear do not step well off when "+
+   "filing to the left or right; if, when files are ordered into line, "+
+   "they do not move up with promptitude and precision, in either case, "+
+   "the following files will be arrested in their march, and thereby cause "+
+   "the column to be lengthened out.\n\n"+
+   "309. The instructor will place himself on the flank from which the "+
+   "files are broken, to assure himself of the exact observance of the "+
+   "principles.\n\n"+
+   "310. Files will only be broken off from the side of direction, in "+
+   "order that the whole company may easily pass from the front to the "+
+   "flank march.",
+   [
+     ["1. Two files from left to rear. 2. MARCH", "files_rear_left_2",
+      "Given while the company marches in line (Lesson III: Company, "+
+      "forward — MARCH first). The two left files drop back and form a "+
+      "single rank covering the first through fourth files from the left "+
+      "of the remaining company (295) — the outer file's men on the 1st "+
+      "and 3d, the inner file's on the 2d and 4th. Ranks already broken "+
+      "gain two files inward and shorten the step to make room nearest "+
+      "the rear rank for the files last ordered back (297). All further "+
+      "breaks must come from the same side (298). In this simulation the "+
+      "momentary flank-facing of 295 is not shown, the broken ranks are "+
+      "drawn behind the file closers (who keep their posts), and the "+
+      "front may not be reduced below six files (cf. 329)."],
+     ["1. Two files from right to rear. 2. MARCH", "files_rear_right_2",
+      "The same movement from the right flank: the two right files drop "+
+      "back and cover the first through fourth files from the right of "+
+      "the remaining company (295); later breaks must also come from the "+
+      "right (298)."],
+     ["1. Two files into line. 2. MARCH", "files_line_2",
+      "The rank nearest the company — the files last broken — returns "+
+      "briskly into line on the flank, and the ranks still broken gain "+
+      "two files back toward the flank to which they belong (299-300). "+
+      "The captain turns to his company to watch the execution (301)."],
+     ["Four files from left to rear — MARCH", "files_rear_left_4",
+      "Two groups break together (302): the four left files face about "+
+      "their business at once, filing into two covering ranks — the "+
+      "outermost pair deepest, exactly as if broken in succession."],
+     ["Four files from right to rear — MARCH", "files_rear_right_4",
+      "Two groups break together from the right flank (302)."],
+     ["Four files into line — MARCH", "files_line_4",
+      "Two ranks are brought into line at once (303-304): the files "+
+      "designated advance the inner shoulder, move up and form on the "+
+      "flank of the company by the shortest lines."],
+     ["Six files from left to rear — MARCH", "files_rear_left_6",
+      "Three groups break together from the left flank (302), filing "+
+      "into three covering ranks behind the company."],
+     ["Six files from right to rear — MARCH", "files_rear_right_6",
+      "Three groups break together from the right flank (302)."],
+     ["Six files into line — MARCH", "files_line_6",
+      "Three ranks move up and form on the flank of the company at once, "+
+      "by the shortest lines (303-304)."]
+   ]],
   ["Article 3: To march in column in route",
-   "1. Route step. 2. MARCH ... the men carry arms at will and are no longer "+
-   "required to keep the step ... (Not animated in this version.)", []],
+   "311. The swiftness of the route step will be one hundred and ten steps "+
+   "in a minute; this swiftness will be habitually maintained in columns "+
+   "in route, when the roads and ground may permit.\n\n"+
+   "312. The company being at a halt, and supposed to constitute a "+
+   "subdivision of a column, when the instructor shall wish to cause it to "+
+   "march in the route step, he will command:\n\n"+
+   "1. Column, forward. 2. Guide left (or right). 3. Route step. 4. "+
+   "MARCH.\n\n"+
+   "313. At the command march, repeated by the captain, the two ranks will "+
+   "step off together; the rear rank will take in marching, by shortening "+
+   "a few steps, a distance of one pace (twenty-eight inches) from the "+
+   "rank preceding, which distance will be computed from the breasts of "+
+   "the men in the rear rank, to the knapsacks of the men in the front "+
+   "rank. The men, without further command, will immediately carry their "+
+   "arms at will as indicated in the School of the Soldier, No. 228, or "+
+   "they may sling them on their backs, muzzle up. They will no longer be "+
+   "required to march in the cadenced pace, or with the same foot, or to "+
+   "remain silent. The files will march at ease; but care will be taken to "+
+   "prevent the ranks from intermixing, the front rank from getting in "+
+   "advance of the guide, and the rear rank from opening to too great a "+
+   "distance.\n\n"+
+   "314. The company marching in the route step, the instructor will cause "+
+   "it to change direction, which will be executed without formal "+
+   "commands, on a simple caution from the captain; the rear rank will "+
+   "come up to change direction in the same manner as the front rank. Each "+
+   "rank will conform itself, although in the route step, to the "+
+   "principles which have been prescribed for the change in closed ranks, "+
+   "with this difference only; that the pivot man, instead of taking steps "+
+   "of nine inches, will take steps of fourteen inches, in order to clear "+
+   "the wheeling point.\n\n"+
+   "315. The company marching in the route step, to cause it to pass to "+
+   "the cadenced step, the instructor will first order pieces to be "+
+   "brought to the right shoulder, and then command:\n\n"+
+   "1. Quick time. 2. MARCH.\n\n"+
+   "316. At the command march, the men will resume the cadenced step, and "+
+   "will close so as to leave a distance of sixteen inches between each "+
+   "rank.\n\n"+
+   "317. The company marching in the cadenced pace, the instructor, to "+
+   "cause it to take the route step, will command:\n\n"+
+   "1. Route step. 2. MARCH.\n\n"+
+   "318. At the command march, the front rank will continue the step of "+
+   "twenty-eight inches, the rear rank will take, by gradually shortening "+
+   "the step, the distance of twenty-eight inches from the front rank; the "+
+   "men will carry their arms at will.\n\n"+
+   "319. If the company be marching in the route step, and the instructor "+
+   "should suppose the necessity of marching by the flank in the same "+
+   "direction, he will command:\n\n"+
+   "1. Company by the right (or left) flank. 2. By file left (or right). "+
+   "3. MARCH.\n\n"+
+   "320. At the command march, the company will face to the right (or "+
+   "left) in marching, the captain will place himself by the side of the "+
+   "guide who conducts the leading flank: this guide will wheel "+
+   "immediately to the left or right; all the files will come in "+
+   "succession to wheel on the same spot as the guide; if there be files "+
+   "broken off to the rear, they will, by wheeling, regain their "+
+   "respective places, and follow the movement of the company.\n\n"+
+   "321. The instructor having caused the company to be again formed into "+
+   "line, will exercise it in increasing and diminishing front, by "+
+   "platoon, which will be executed by the same commands, and the same "+
+   "means, as if the company were marching in the cadenced step. When the "+
+   "company breaks into platoons, the chief of each will move to the flank "+
+   "of his platoon, and will take the place of the guide, who will step "+
+   "back into the rear rank.\n\n"+
+   "322. The company being in column, by platoon, and supposed to march in "+
+   "the route step, the instructor can cause the front to be diminished "+
+   "and increased, by section, if the platoons have a front of twelve "+
+   "files or more.\n\n"+
+   "323. The movements of diminishing and increasing front, by section, "+
+   "will be executed according to the principles indicated for the same "+
+   "movements by platoon. The right sections of platoons will be commanded "+
+   "by the captain and first lieutenant, respectively; the left sections, "+
+   "by the two next subalterns in rank, or, in their absence, by "+
+   "sergeants.\n\n"+
+   "324. The instructor wishing to diminish by section, will give the "+
+   "order to the captain, who will command:\n\n"+
+   "1. Break into sections. 2. MARCH.\n\n"+
+   "325. As soon as the platoons shall be broken, each chief of section "+
+   "will place himself on its directing flank in the front rank; the "+
+   "guides, who will be thus displaced, will fall back into the rear rank; "+
+   "the file closers will close up to within one pace of this rank.\n\n"+
+   "326. Platoons will be broken into sections only in the column in "+
+   "route; the movement will never be executed in the maneuvers, whatever "+
+   "may be the front of the company.\n\n"+
+   "327. When the instructor shall wish to re-form platoons, he will give "+
+   "the order to the captain, who will command:\n\n"+
+   "1. Form platoons. 2. MARCH.\n\n"+
+   "328. At the first command, each chief of section will place himself "+
+   "before its centre, and the guides will pass into the front rank. At "+
+   "the command march, the movement will be executed as has been "+
+   "prescribed for forming company. The moment the platoons are formed, "+
+   "the chiefs of the left sections will return to their places as file "+
+   "closers.\n\n"+
+   "329. The instructor will also cause to be executed the diminishing and "+
+   "increasing front by files, as prescribed in the preceding article, and "+
+   "in the same manner, as if marching in the cadenced step. When the "+
+   "company is broken into sections, the subdivisions must not be reduced "+
+   "to a front of less than six files, not counting the chief of the "+
+   "section.\n\n"+
+   "330. The company being broken by platoon, or by section, the "+
+   "instructor will cause it, marching in the route step, to march by the "+
+   "flank in the same direction, by the commands and the means indicated, "+
+   "Nos. 319 and 320. The moment the subdivisions shall face to the right "+
+   "(or left), the first file of each will wheel to the left (or right), "+
+   "in marching, to prolong the direction, and to unite with the rear file "+
+   "of the subdivision immediately preceding. The file closers will take "+
+   "their habitual places in the march by the flank, before the union of "+
+   "the subdivisions.\n\n"+
+   "331. If the company be marching by the right flank, and the instructor "+
+   "should wish to undouble the files, which might sometimes be found "+
+   "necessary, he will inform the captain, who, after causing the cadenced "+
+   "step to be resumed, and arms to be shouldered or supported, will "+
+   "command:\n\n"+
+   "1. In two ranks, undouble files. 2. MARCH.\n\n"+
+   "332. At the second command, the odd numbers will continue to march "+
+   "straight forward, the even numbers will shorten the step, and "+
+   "obliquing to the left, will place themselves promptly behind the odd "+
+   "numbers; the rear rank will gain a step to the left so as to retake "+
+   "the touch of elbows on the side of the front rank.\n\n"+
+   "333. If the company be marching by the left flank, it will be the even "+
+   "numbers who will continue to march forward, and the odd numbers who "+
+   "will undouble.\n\n"+
+   "334. If it be found necessary, from the narrowness of the way or other "+
+   "cause, to reduce the front still further, the captain, on an "+
+   "intimation from the instructor, will command:\n\n"+
+   "1. In one rank, undouble files. 2. MARCH.\n\n"+
+   "335. At the command march, the right or left guide, with the leading "+
+   "front-rank man, will continue the march, the rear-rank man stepping in "+
+   "rear of his file-leader as soon as he is able to pass; the other files "+
+   "marking time. The second file, and successively all the other files, "+
+   "will step off as soon as sufficient distance is gained, the front-rank "+
+   "man of each file following immediately the rear-rank man of the file "+
+   "next in front of him, and each rear-rank man taking his place as above "+
+   "indicated.\n\n"+
+   "336. If the instructor wishes to double files, he will so indicate to "+
+   "the captain, who will command:\n\n"+
+   "1. In two ranks, double files. 2. MARCH.\n\n"+
+   "337. At the command march, the rear-rank men will take a side step to "+
+   "the right (or left), and each rank will close up on its leading "+
+   "file.\n\n"+
+   "338. If the instructor should wish again to double the files, he will "+
+   "give the order to the captain, who will command:\n\n"+
+   "1. In four ranks, double files. 2. MARCH.\n\n"+
+   "339. At the command march, the files will double in the manner as "+
+   "explained, when the company faces by the right or the left flank. The "+
+   "instructor will afterward cause the route step to be resumed.\n\n"+
+   "340. The various movements prescribed in this lesson may be executed "+
+   "in double quick time. The men will be brought, by degrees, to pass "+
+   "over at this gait about eleven hundred yards in seven minutes.\n\n"+
+   "341. When the company marching in the route step shall halt, the rear "+
+   "rank will close up at the command halt, and the whole will shoulder "+
+   "arms.\n\n"+
+   "342. Marching in the route step, the men will be permitted to carry "+
+   "their pieces in the manner they shall find most convenient, paying "+
+   "attention only to holding the muzzles up, so as to avoid accidents.",
+   [
+     ["1. Column, forward. 2. Guide left (right). 3. Route step. 4. MARCH",
+      "route_forward",
+      "Given with the company at a halt, in line, as a subdivision of a "+
+      "column (312). The two ranks step off together; the rear rank takes "+
+      "a full pace from the front, arms are carried at will, and the men "+
+      "are no longer required to keep the step, the touch of elbows, or "+
+      "silence (313) — shown here as a slight disorder in the ranks that "+
+      "changes with every march. The file closers keep their two paces "+
+      "behind the (opened) rear rank. The guide has no separate "+
+      "representation in this simulation."],
+     ["1. Quick time. 2. MARCH", "quick_time",
+      "Pieces are first brought to the right shoulder; the men resume the "+
+      "cadenced step, retake their dress, and the rear rank closes to its "+
+      "habitual distance (315-316)."],
+     ["1. Route step. 2. MARCH", "route_step",
+      "Given with the company marching in the cadenced pace: the rear "+
+      "rank gradually opens to the full pace and arms are carried at "+
+      "will (317-318)."],
+     ["Company by the right flank — By file left — MARCH",
+      "route_flank_right",
+      "Marching in the route step, the company passes to the flank march "+
+      "in the SAME direction (319-320): it faces to the right in "+
+      "marching, files doubling as in Lesson IV, and wheels at once by "+
+      "file to the left — each four sweeping ninety degrees over the "+
+      "pivot in succession. All the flank-march evolutions can follow. "+
+      "The same command is animated from the COLUMN BY PLATOON (330): "+
+      "each platoon faces and doubles where it stands and wheels at its "+
+      "own pivot; the wheels prolong the same direction, so the 2d "+
+      "platoon finishes directly behind the 1st and closes up the "+
+      "remaining distance while the captain, the guides, and the 1st "+
+      "Lieutenant (returning among the file closers) take the posts of a "+
+      "company that has faced — reproducing the company's own column of "+
+      "fours exactly. In this simulation the cadenced step and dress are "+
+      "resumed in the turn, and files broken to the rear (Art. 2) must "+
+      "first be brought into line."],
+     ["Company by the left flank — By file right — MARCH",
+      "route_flank_left",
+      "The same movement by the left flank: the company (or each platoon "+
+      "of the column, 330) faces left in marching, doubles, and wheels at "+
+      "once by file to the right, prolonging the original direction. From "+
+      "the column, the first file of each subdivision unites with the "+
+      "rear of the subdivision preceding (330), so the 1st platoon still "+
+      "leads — a column in which the files are not afterward un-doubled "+
+      "in this simulation (halt, front, and face the company anew "+
+      "first)."],
+     ["1. Break into sections. 2. MARCH", "break_sections",
+      "Given in the column by platoon, marching in route (324-326), and "+
+      "only when the platoons have a front of twelve files or more "+
+      "(322). The right section of each platoon leads; the left section "+
+      "obliques in behind it, aligning on the directing flank. The right "+
+      "sections are commanded by the captain and 1st Lieutenant, the "+
+      "left sections by the next subalterns or sergeants (323). In this "+
+      "simulation the guides and file closers keep their column "+
+      "stations (the swaps and closing-up of 325 are not shown), and the "+
+      "column is not shown in route step."],
+     ["1. Form platoons. 2. MARCH", "form_platoons",
+      "The left sections move up alongside their right sections and the "+
+      "platoons re-form; the chiefs of the left sections return to their "+
+      "places as file closers, the captain and 1st Lieutenant before the "+
+      "centres of their platoons (327-328)."],
+     ["1. In two ranks, undouble files. 2. MARCH", "flank_undouble_2",
+      "Given marching by the flank in column of fours, the cadenced step "+
+      "resumed and arms shouldered (331): the odd numbers march straight "+
+      "forward and the even numbers oblique in behind them, leaving each "+
+      "file's front- and rear-rank man abreast (332-333). The file "+
+      "closers close toward the narrower column."],
+     ["1. In one rank, undouble files. 2. MARCH", "flank_undouble_1",
+      "The guide and the leading man march on; each rear-rank man steps "+
+      "behind his file leader and each file steps off in succession as "+
+      "its distance is gained, the column doubling in length (334-335)."],
+     ["1. In two ranks, double files. 2. MARCH", "flank_double_2",
+      "Each rank closes up on its leading file, the rear-rank men "+
+      "side-stepping back beside their leaders (336-337)."],
+     ["1. In four ranks, double files. 2. MARCH", "flank_double_4",
+      "The files double again into the column of fours, in the manner as "+
+      "when the company faces by the flank (338-339); the route step may "+
+      "afterward be resumed."]
+   ]],
   ["Article 4: Countermarch",
-   "1. Company, right--FACE. 2. By file left. 3. MARCH ... the company "+
-   "reverses its direction on its own ground ... (Not animated in this "+
-   "version.)", []],
+   "343. The company being at a halt, and supposed to constitute part of a "+
+   "column, right in front, when the instructor shall wish to cause it to "+
+   "countermarch, he will command:\n\n"+
+   "1. Countermarch. 2. Company, right — FACE. 3. By file left. 4. "+
+   "MARCH.\n\n"+
+   "344. At the second command, the company will face to the right, the "+
+   "two guides to the right about; the captain will go to the right of "+
+   "his company and cause two files to break to the rear, and then place "+
+   "himself by the side of the front rank man, to conduct him.\n\n"+
+   "345. At the command march, both guides will stand fast; the company "+
+   "will step out smartly; the first file, conducted by the captain, will "+
+   "wheel around the right guide, and direct its march along the front "+
+   "rank so as to arrive behind, and two paces from, the left guide; each "+
+   "file will come in succession to wheel on the same ground around the "+
+   "right guide; the leading file having arrived at a point opposite to "+
+   "the left guide, the captain will command:\n\n"+
+   "1. Company. 2. HALT. 3. FRONT. 4. Right — DRESS.\n\n"+
+   "346. The first command will be given at four paces from the point "+
+   "where the leading file is to rest.\n\n"+
+   "347. At the second command, the company will halt.\n\n"+
+   "348. At the third, it will face to the front.\n\n"+
+   "349. At the fourth, the company will dress by the right; the captain "+
+   "will step two paces outside of the left guide, now on the right, and "+
+   "direct the alignment, so that the front rank may be enclosed between "+
+   "the two guides: the company being aligned, he will command FRONT, and "+
+   "place himself before the centre of the company as if in column; the "+
+   "guides, passing along the front rank, will shift to their proper "+
+   "places, on the right and left of that rank.\n\n"+
+   "350. In a column, by platoon, the countermarch will be executed by "+
+   "the same commands, and according to the same principles; the guide of "+
+   "each platoon will face about, and its chief will place himself by the "+
+   "side of the file on the right, to conduct it.\n\n"+
+   "351. In a column, left in front, the countermarch will be executed by "+
+   "inverse commands and means, but according to the same principles. "+
+   "Thus, the movement will be made by the right flank of subdivisions, "+
+   "if the right be in front, and by the left flank, if the left be in "+
+   "front; in both cases the subdivisions will wheel by file to the side "+
+   "of the front rank.",
+   [
+     ["1. Countermarch. 2. Company, right — FACE. 3. By file left. 4. MARCH",
+      "countermarch_right",
+      "Given at a halt, in line, as part of a column right in front "+
+      "(343). The company faces to the right without doubling; the two "+
+      "guides post themselves on the flanks of the front rank and face "+
+      "about; the two leading files break to the rear — clearing them to "+
+      "swing around the standing right guide — and the captain conducts "+
+      "the first file (344). At MARCH the guides stand fast while every "+
+      "file wheels 180 degrees in succession over the same ground around "+
+      "the pivot and marches back along the front; the column halts "+
+      "opposite the left guide, fronts, and dresses in between the two "+
+      "guides (345-349). The company thus ends on its own ground, faced "+
+      "about, the front rank still in front and every file in its proper "+
+      "order — the right flank still on the right. Simulation notes: the "+
+      "guides are shown as the 1st and 2d Sergeants, who then pass along "+
+      "the front rank to their habitual places; the captain takes his "+
+      "line-of-battle post on the new right (349's column post before "+
+      "the centre is not shown); the file closers pass around the far "+
+      "flank; the countermarch of the column by platoon (350) is not yet "+
+      "animated."],
+     ["1. Countermarch. 2. Company, left — FACE. 3. By file right. 4. MARCH",
+      "countermarch_left",
+      "The inverse means, for a column left in front (351): the company "+
+      "faces to the left, the two leading files of the left flank break "+
+      "to the rear, and the column wheels by file to the right around "+
+      "the standing left guide — in both cases wheeling by file to the "+
+      "side of the front rank. The result is the same exact inversion on "+
+      "the company's own ground."]
+   ]],
   ["Article 5: Being in column by platoon, to form on the right (or left) "+
    "into line of battle",
    "1. On the right, into line. 2. Guide right ... (Not animated in this "+
@@ -3185,6 +4480,28 @@ const ORDER_DISPATCH = {
   break_platoons_right: m => m.odBreakPlatoons(true),
   break_platoons_left: m => m.odBreakPlatoons(false),
   form_company: m => m.odFormCompany(),
+  files_rear_left_2:  m => m.odBreakFiles(true, 1),
+  files_rear_right_2: m => m.odBreakFiles(false, 1),
+  files_rear_left_4:  m => m.odBreakFiles(true, 2),
+  files_rear_right_4: m => m.odBreakFiles(false, 2),
+  files_rear_left_6:  m => m.odBreakFiles(true, 3),
+  files_rear_right_6: m => m.odBreakFiles(false, 3),
+  files_line_2: m => m.odFilesIntoLine(1),
+  files_line_4: m => m.odFilesIntoLine(2),
+  files_line_6: m => m.odFilesIntoLine(3),
+  route_forward: m => m.odRouteForward(),
+  route_step:    m => m.odRouteStep(),
+  quick_time:    m => m.odQuickTime(),
+  route_flank_right: m => m.odRouteFlank(true),
+  route_flank_left:  m => m.odRouteFlank(false),
+  flank_undouble_2: m => m.odFlankUndouble2(),
+  flank_undouble_1: m => m.odFlankUndouble1(),
+  flank_double_2:   m => m.odFlankDouble2(),
+  flank_double_4:   m => m.odFlankDouble4(),
+  break_sections: m => m.odBreakSections(),
+  form_platoons:  m => m.odFormPlatoons(),
+  countermarch_right: m => m.odCountermarch(true),
+  countermarch_left:  m => m.odCountermarch(false),
   online_right_prep: m => m.odOnLinePrep(true),
   online_left_prep: m => m.odOnLinePrep(false),
   online_right_turn: m => m.odOnLineTurn(),
@@ -3200,6 +4517,11 @@ const STATE_LABEL = {
   OPEN_DONE: "Ranks open",
   LINE_GUIDE: "In line of battle, marching",
   LINE_MARCH: "Marching in line of battle",
+  FILES_MARCH: "Marching in line of battle — files broken to the rear",
+  ROUTE_MARCH: "Marching in the route step — arms at will, ranks at ease",
+  FLANK_2: "Marching by the flank in two ranks (files undoubled)",
+  FLANK_1: "Marching by the flank in single rank",
+  SEC_MARCH: "In column by section",
   OBLIQUE_MARCH: "Marching obliquely in line of battle",
   FLANK_FACED: "Faced by the flank, files doubled (column of fours)",
   FLANK_MARCH: "Marching by the flank in column of fours",
@@ -3220,7 +4542,7 @@ const STATE_LABEL = {
 
 if(typeof module !== "undefined" && module.exports){
   module.exports = { CompanyModel, Man, vec, add, sub, dot, dist, rotAbout,
-                     FW, RANKD, CLOSERD, OPEN_RANKD, MARCH_PACES, BOOK,
+                     FW, RANKD, CLOSERD, OPEN_RANKD, ROUTE_RANKD, MARCH_PACES, BOOK,
                      ORDER_DISPATCH, STATE_LABEL };
 }
 /*MODEL-END*/
@@ -3246,6 +4568,16 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   let view = [0, 0], zoom = 1, selId = null;
   let arrows = [];
   let anim = null;   // {t0, dur}
+  // Speech bubbles: who is heard giving each command. Default is the
+  // captain (standing in for Casey's "instructor"); a few commands are
+  // given by EACH chief of platoon — the captain for the 1st and the
+  // 1st Lieutenant for the 2d (pars. 179-181, 186-187, 244-245).
+  let speech = [];   // [{id, text, t0, dur}]
+  const SPEECH_SPEAKERS = {
+    break_dress: ["capt", "1L"],   // each chief dresses his platoon
+    break_front: ["capt", "1L"],   // each chief commands FRONT
+    form_halt:   ["capt", "1L"]    // each chief halts his platoon on the line
+  };
   let dragging = null, dragMoved = false;
 
   function resetView(){
@@ -3383,14 +4715,14 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     open_front:       inStates("OPEN_RANKS"),
     close_order:      inStates("OPEN_RANKS", "OPEN_DONE"),
     company_forward:  inStates("LINE_HALT"),
-    line_march:       inStates("LINE_MARCH"),
-    line_halt:        inStates("LINE_MARCH", "OBLIQUE_MARCH"),
+    line_march:       inStates("LINE_MARCH", "FILES_MARCH", "ROUTE_MARCH"),
+    line_halt:        inStates("LINE_MARCH", "OBLIQUE_MARCH", "ROUTE_MARCH"),
     oblique_right:    inStates("LINE_HALT", "LINE_MARCH", "OBLIQUE_MARCH"),
     oblique_left:     inStates("LINE_HALT", "LINE_MARCH", "OBLIQUE_MARCH"),
     oblique_forward:  inStates("OBLIQUE_MARCH"),
     right_face:       inStates("LINE_HALT"),
     left_face:        inStates("LINE_HALT"),
-    flank_march:      inFlank,
+    flank_march:      inStates("FLANK_FACED", "FLANK_MARCH", "FLANK_2", "FLANK_1"),
     by_file_left:     inFlank,
     by_file_right:    inFlank,
     flank_front:      inFlank,
@@ -3406,7 +4738,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     break_front:       inStates("BREAK_DRESSED"),
     break_forward_right: inStates("COL_READY", "LINE_MARCH"),
     break_forward_left:  inStates("COL_READY", "LINE_MARCH"),
-    col_march:         inCol,
+    col_march:         inStates("COL_HALT", "COL_MARCH", "SEC_MARCH"),
     col_left:          inCol,
     col_right:         inCol,
     col_halt:          inStates("COL_MARCH"),
@@ -3420,6 +4752,28 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     break_platoons_right: inStates("LINE_MARCH"),
     break_platoons_left:  inStates("LINE_MARCH"),
     form_company:         inStates("COL_MARCH"),
+    files_rear_left_2:  m => m.canBreakFiles(true, 1),
+    files_rear_right_2: m => m.canBreakFiles(false, 1),
+    files_rear_left_4:  m => m.canBreakFiles(true, 2),
+    files_rear_right_4: m => m.canBreakFiles(false, 2),
+    files_rear_left_6:  m => m.canBreakFiles(true, 3),
+    files_rear_right_6: m => m.canBreakFiles(false, 3),
+    files_line_2: m => m.canFilesIntoLine(1),
+    files_line_4: m => m.canFilesIntoLine(2),
+    files_line_6: m => m.canFilesIntoLine(3),
+    route_forward:     inStates("LINE_HALT"),
+    route_step:        inStates("LINE_MARCH"),
+    quick_time:        inStates("ROUTE_MARCH"),
+    route_flank_right: inStates("ROUTE_MARCH", "COL_MARCH"),
+    route_flank_left:  inStates("ROUTE_MARCH", "COL_MARCH"),
+    flank_undouble_2:  m => m.state === "FLANK_MARCH" && !m._flankHybrid,
+    flank_undouble_1:  inStates("FLANK_2"),
+    flank_double_2:    inStates("FLANK_1"),
+    flank_double_4:    inStates("FLANK_2"),
+    break_sections:    m => m.state === "COL_MARCH" && m.n2 >= 12,
+    form_platoons:     inStates("SEC_MARCH"),
+    countermarch_right: inStates("LINE_HALT"),
+    countermarch_left:  inStates("LINE_HALT"),
     online_right_prep: m => inCol(m) && colRightInFront(m) === true,
     online_left_prep:  m => inCol(m) && colRightInFront(m) === false,
     online_right_turn: inStates("ONLINE_READY"),
@@ -3449,6 +4803,23 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
       return;
     }
     showText(title + " — " + label, casey, note);
+    // Speech bubble(s) by the officer(s) giving the command. Strip the
+    // book's numbering ("1. ... 2. ...") and parenthetical alternates
+    // ("(right)"), and normalize dashes, so the bubble reads as the
+    // command actually spoken.
+    const spoken = label.replace(/\([^)]*\)/g, "")
+                        .replace(/(^|\s)\d+\.\s*/g, "$1")
+                        .replace(/--/g, "\u2014")
+                        .replace(/\.\s+/g, " \u2014 ")
+                        .replace(/\s*\u2014\s*/g, " \u2014 ")
+                        .replace(/\s{2,}/g, " ").trim();
+    if(spoken){
+      const t0 = performance.now();
+      const dur = 2800 + spoken.length * 45;
+      speech = (SPEECH_SPEAKERS[key] || ["capt"])
+        .filter(id => model.men.has(id))
+        .map(id => ({ id: id, text: spoken, t0: t0, dur: dur }));
+    }
     if(!el("inArrows").checked) arrows = [];
     const moving = model.menArr().filter(m => m.path);
     for(const m of moving) arrows.push(m.path.slice());
@@ -3622,7 +4993,78 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
       }
     }
 
+    // speech bubbles: drawn on top of everything, following the speaker
+    if(speech.length){
+      const now = performance.now();
+      speech = speech.filter(s => now - s.t0 < s.dur);
+      for(const s of speech){
+        const man = model.men.get(s.id);
+        if(!man) continue;
+        const [sx, sy] = w2s(man.pos);
+        const age = now - s.t0;
+        const a = age > s.dur - 400 ? Math.max(0, (s.dur - age) / 400) : 1;
+        drawSpeech(s.text, sx, sy, 0.42 * P, a, w, h);
+      }
+    }
+
     requestAnimationFrame(draw);
+  }
+  // A cream speech bubble with a small tail pointing at the speaker.
+  // Kept at constant screen size (like the UI) regardless of zoom, and
+  // flipped to the other side of the marker near the canvas edges.
+  function drawSpeech(text, sx, sy, r, alpha, w, h){
+    const fpx = 12, lineH = fpx * 1.25, pad = 7, maxW = 170;
+    ctx.font = "italic bold " + fpx + "px Georgia, serif";
+    // word wrap
+    const words = text.split(" "), lines = [];
+    let cur = "";
+    for(const wd of words){
+      const t = cur ? cur + " " + wd : wd;
+      if(ctx.measureText(t).width > maxW && cur){ lines.push(cur); cur = wd; }
+      else cur = t;
+    }
+    if(cur) lines.push(cur);
+    let bw = 0;
+    for(const ln of lines) bw = Math.max(bw, ctx.measureText(ln).width);
+    bw += pad * 2;
+    const bh = lines.length * lineH + pad * 2 - (lineH - fpx);
+    // preferred: above-right of the marker; flip near edges
+    const gap = r * 0.55;
+    let right = sx + r + gap + bw <= w - 4;
+    let above = sy - r - gap - bh >= 4;
+    if(!right && sx - r - gap - bw < 4) right = true;   // both fail: keep right
+    const bx = right ? sx + r + gap : sx - r - gap - bw;
+    const by = above ? sy - r - gap - bh : sy + r + gap;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#FFFDF4";
+    ctx.strokeStyle = "#8A7B57";
+    ctx.lineWidth = 1.2;
+    roundRect(bx, by, bw, bh, 6);
+    ctx.fill();
+    // tail: from the bubble's near corner toward the speaker
+    const tx0 = right ? bx + 3 : bx + bw - 3;
+    const ty0 = above ? by + bh - 2 : by + 2;
+    const tx1 = right ? bx + 14 : bx + bw - 14;
+    ctx.beginPath();
+    ctx.moveTo(tx0, ty0);
+    ctx.lineTo(sx + (right ? r * 0.6 : -r * 0.6), sy + (above ? -r * 0.6 : r * 0.6));
+    ctx.lineTo(tx1, ty0);
+    ctx.closePath();
+    ctx.fill();
+    // outline bubble + tail (stroke bubble after tail fill so the join is clean)
+    roundRect(bx, by, bw, bh, 6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(tx0, ty0);
+    ctx.lineTo(sx + (right ? r * 0.6 : -r * 0.6), sy + (above ? -r * 0.6 : r * 0.6));
+    ctx.lineTo(tx1, ty0);
+    ctx.stroke();
+    ctx.fillStyle = "#3B3325";
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    for(let i = 0; i < lines.length; i++)
+      ctx.fillText(lines[i], bx + pad, by + pad - 2 + i * lineH);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
   }
   function drawPill(text, x, y, fpx, color){
     ctx.font = "bold " + fpx + "px Georgia, serif";
@@ -3731,7 +5173,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
 
   el("inZoom").addEventListener("input", e => { zoom = parseFloat(e.target.value); });
   function rebuild(){
-    anim = null; arrows = []; selId = null;
+    anim = null; arrows = []; selId = null; speech = [];
     model.build(parseInt(el("inFiles").value) || 20,
                 el("inCpl8").checked, el("in3Lt").checked);
     resetView(); updateState();
