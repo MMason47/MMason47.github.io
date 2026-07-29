@@ -222,6 +222,8 @@ class Man{
     this.pos = [0,0]; this.facing = UP;
     this.path = null; this.cum = null; this.length = 0; this.timed = false;
     this.fileI = null;
+    // facing to assume when the current movement completes (or null)
+    this.endFacing = null;
   }
   setTimedPath(pts){
     this.path = [this.pos].concat(pts);
@@ -284,6 +286,12 @@ class CompanyModel{
     this.brokenPairs = []; this._breakSide = null;
     // Lesson VI, Art. 3: route-step disorder seed and section bookkeeping
     this._routeTick = 0; this._sections = null; this._flankHybrid = false;
+    // Lesson VI, Art. 4: countermarch bookkeeping between its four orders
+    this._cm = null;
+    // Forming the company: option memory, completion callback, and the
+    // GUI-consumed extras (delayed speech, movement-free animation time)
+    this._cpl8 = corporals8; this._onFinish = null;
+    this._extraSpeech = null; this._extraAnimMs = 0;
     const sectionOf = i => i < s1 ? 1 : i < n1 ? 2 : i < n1 + s3 ? 3 : 4;
     const fx = i => -i * FW;
     const put = (m, x, y) => { m.pos = [x, y]; this.men.set(m.id, m); this.order.push(m.id); };
@@ -387,9 +395,12 @@ class CompanyModel{
   faceAll(a, members){ for(const m of (members || this.menArr())) m.facing = a; }
   clearPaths(){ for(const m of this.men.values()){ m.path = null; m.length = 0; } }
   finish(){
-    for(const m of this.men.values())
+    for(const m of this.men.values()){
       if(m.path){ m.pos = m.path[m.path.length-1]; m.path = null; }
+      if(m.endFacing != null){ m.facing = m.endFacing; m.endFacing = null; }
+    }
     this._captSpeedMult = 1;
+    if(this._onFinish){ const f = this._onFinish; this._onFinish = null; f(); }
   }
   lineOrigin(){
     const R = vec(this.heading + Math.PI/2);
@@ -3037,28 +3048,43 @@ class CompanyModel{
   }
 
   // ------- Lesson VI, Art. 4: the countermarch (343-351) -------------------
-  // The company, at a halt as part of a column, faces to the right (left)
-  // WITHOUT doubling; the two guides post themselves on the flanks of the
-  // front rank and face about; the two leading files break to the rear
-  // (344) — which clears them to swing around the standing guide — and the
-  // captain conducts the first file. At MARCH the guides stand fast; every
-  // file wheels 180 degrees in succession over the same ground around the
-  // pivot guide and marches back along the front; when the leading file is
-  // opposite the far guide: Company — HALT — FRONT — Right — DRESS, and
-  // the front rank dresses in, enclosed between the two guides (345-349).
+  // Executed in four orders, each its own command button:
+  //
+  //  1. Countermarch. Company, right (left) -- FACE. By file left (right).
+  //     The company faces into the column of fours, files doubling as in
+  //     the ordinary face; the two guides post themselves and face about --
+  //     the pivot-flank guide at the wheeling point the column will turn
+  //     around, the far guide on the far flank of the front rank; and the
+  //     captain goes to the flank of his company and places himself beside
+  //     the first rank of the column, on its outer side, to conduct it.
+  //  2. MARCH.  The guides stand fast; each four wheels 180 degrees in
+  //     succession over the same ground AROUND the standing pivot guide and
+  //     directs its march back along the front (345), shown up to the
+  //     moment the leading four is four paces from where it is to rest --
+  //     the point at which the captain gives "Company" (346).
+  //  3. Company -- HALT.  The company halts (347): the leading four
+  //     opposite the far guide, the rear of the column closing around the
+  //     wheel to its place, the whole standing in the column of fours.
+  //  4. FRONT.  Right -- DRESS.  The company faces to the front (348) and
+  //     dresses by the right, the files un-doubling onto its own ground so
+  //     that the front rank is enclosed between the two guides; the guides
+  //     pass along the front rank to their proper places (349).
+  //
   // The company thus ends on its own ground, faced about, the front rank
   // still in front and the right flank still on the right. Simplifications:
-  // the guides are shown as the 1st and 2d Sergeants; the captain takes
-  // the app's line-of-battle post on the new right (349's column post
-  // before the centre is not shown); the countermarch of the column by
-  // platoon (350) is not yet animated.
-  odCountermarch(toRight){
+  // the guides are shown as the 1st and 2d Sergeants; the pivot guide is
+  // posted at the wheeling point itself, so that every four clears him by
+  // at least a pace, and the momentary break of the two leading files to
+  // the rear (344) is therefore not shown; the captain takes the app's
+  // line-of-battle post on the new right (349's column post before the
+  // centre is not shown); the countermarch of the column by platoon (350)
+  // is not yet animated.
+  odCountermarchFace(toRight){
     if(this.state !== "LINE_HALT")
       return "The countermarch is executed from a halt, in line, as part "+
              "of a column (343).";
     this.clearPaths();
     const h = this.heading, F = vec(h), Rv = vec(h + Math.PI/2), B = vec(h + Math.PI);
-    const h2 = h + Math.PI;
     const n = this.nFiles;
     const D0 = h + (toRight ? Math.PI/2 : -Math.PI/2);
     const turn = toRight ? -Math.PI : Math.PI;   // by file left / right, 180
@@ -3073,41 +3099,92 @@ class CompanyModel{
     const fi = new Map();
     for(const m of rankAndFile)
       fi.set(m.id, Math.round((lat0 - dot(m.pos, Rv)) / FW));
-    // guide posts on the flanks of the front rank, faced about (344)
-    const rgSpot = add(O0, Rv, FW);            // right of the front rank
-    const lgSpot = add(O0, Rv, -n*FW);         // left of the front rank
-    const pivotHead = toRight ? 0 : n - 1;     // the leading (first) file
-    const second = toRight ? 1 : n - 2;
-    // Phase-1 targets: everyone faces in place (files un-doubled: each
-    // file's rear man is already beside his leader); the two leading files
-    // step to the rear for room to swing around the pivot guide (344), and
-    // the captain places himself by the side of the first front-rank man.
-    const faced = new Map();
+    // The column of fours: laid down exactly as in Company, right (left)--
+    // FACE, every four squarely on the trace it will wheel over.  (The
+    // momentary break of the two leading files to the rear, 344, is not
+    // shown: it exists to clear a guide standing on the alignment, and
+    // here the pivot guide stands at the wheeling point, off the trace.)
+    const laneDir = vec(D0 + (toRight ? Math.PI/2 : -Math.PI/2));
+    const axisO = toRight ? O0 : add(O0, Rv, -(n - 1)*FW);
+    const basis = new Map(), shown = new Map();
     for(const m of rankAndFile){
       const i = fi.get(m.id);
-      let p = m.pos.slice();
-      if(i === pivotHead || i === second) p = add(p, B, 1.3);
-      faced.set(m.id, p);
+      const L = toRight ? i : (n - 1 - i);
+      const k = Math.floor(L/2), lp = L % 2;
+      const lane = (m.rank === "front" ? 0 : 2) + lp;
+      const p = add(add(axisO, Rv, (toRight ? -1 : 1)*2*k*FW), laneDir, lane*FW);
+      basis.set(m.id, p);
+      shown.set(m.id, p);
     }
-    let headMan = null;
-    for(const m of rankAndFile)
-      if(m.rank === "front" && fi.get(m.id) === pivotHead) headMan = m;
-    const captLane = (toRight ? -1 : 1);       // outside the front rank
-    faced.set("capt", add(faced.get(headMan.id), vec(D0 + Math.PI/2), captLane*FW));
-    // the wheel: 180 degrees around a pivot one pace outside the pivot
-    // guide, the whole company following the leading file over the same
-    // ground (345), halting with the column above the new line
-    const wheelIds = [...rankAndFile.map(m => m.id), "capt"];
+    // the captain: at the head of the column, by the side of its first
+    // rank, on the outer flank -- one pace outside the fours (344)
+    // (his shown spot is fixed below, once the closers are placed)
+    basis.set("capt", add(axisO, laneDir, 4*FW));
+    // the file closers keep their stations as in the ordinary face -- to
+    // the outer flank of the column for the right face, two paces back
+    // for the left -- and will wheel around WITH the company, which
+    // carries them naturally to the (new) rear side of the re-formed line
+    const closerIds = [];
+    for(const m of this.menArr()){
+      if(m.rank !== "closer" || m.id === "2S") continue;
+      closerIds.push(m.id);
+      let p;
+      if(toRight){
+        const lat = lat0 - dot(m.pos, Rv);     // his lateral in the line
+        p = add(add(O0, Rv, -lat), laneDir, 4.2*FW);
+      } else {
+        p = add(m.pos, B, 2);
+      }
+      basis.set(m.id, p);
+      shown.set(m.id, p);
+    }
+    // the captain's shown spot: his wheel post beside the head four,
+    // edged further out if a file closer stands in the way there
+    let captShown = add(axisO, laneDir, 4*FW);
+    const captClear = p => {
+      for(const [cid, q] of shown)
+        if(cid !== "capt" && dist(p, q) < 0.95) return false;
+      return true;
+    };
+    while(!captClear(captShown)) captShown = add(captShown, laneDir, 0.5*FW);
+    shown.set("capt", captShown);
+    // the guides, faced about (344): the pivot-flank guide at the wheeling
+    // point the column will turn around -- one pace ahead of the head of
+    // the column and one pace to the side of the front rank -- and the far
+    // guide on the far flank of the front rank
+    const sC = (turn < 0 ? -1 : 1);
+    const Rp = vec(D0 + Math.PI/2);
+    const Cc = add(add(axisO, vec(D0), 1.0), Rp, sC);   // LEAD = 1.0
+    const pivotId = toRight ? "1S" : "2S";
+    const farId = toRight ? "2S" : "1S";
+    const farSpot = toRight ? add(O0, Rv, -n*FW) : add(O0, Rv, FW);
+    // the by-file wheel, planned now on the clean column: 180 degrees in
+    // succession around the pivot guide, then back along the front, the
+    // whole halting with the column above the new line (345)
+    const wheelIds = [...rankAndFile.map(m => m.id), "capt", ...closerIds];
     const savedFileI = new Map();
-    for(const id of wheelIds){ savedFileI.set(id, this.men.get(id).fileI); this.men.get(id).fileI = 0; }
-    const anchorH = toRight ? O0 : add(O0, Rv, -(n - 1)*FW);
-    const plans = this._wheelPlan(wheelIds, id => faced.get(id), D0, turn,
-      { H: anchorH, PR: 1.0, LEAD: 1.0, E: (n - 1)*FW,
-        sC: (turn < 0 ? -1 : 1) });
-    for(const id of wheelIds) this.men.get(id).fileI = savedFileI.get(id);
-    // Final: the exact inversion — every file on the same ground, faced
-    // about, the front rank enclosed between the two guides (349)
+    for(const m of rankAndFile){ savedFileI.set(m.id, m.fileI); m.fileI = 0; }
+    savedFileI.set("capt", this.men.get("capt").fileI);
+    this.men.get("capt").fileI = 0;
+    const plans = this._wheelPlan(wheelIds, id => basis.get(id), D0, turn,
+      { H: axisO, PR: 1.0, LEAD: 1.0, E: (n - 1)*FW, sC: sC });
+    for(const [id, v] of savedFileI) this.men.get(id).fileI = v;
+    // total leading-edge travel, and the cut four paces short of rest (346)
+    let Rstar = 1;
+    for(const id of wheelIds)
+      if(savedFileI.has(id))
+        Rstar = Math.max(Rstar, Math.abs(dot(sub(basis.get(id), axisO), Rp) - sC));
+    const Tstar = 1.0 + (n - 1)*FW + Rstar * Math.PI;
+    const tCut = Math.max(0.5, 1 - 4 / Tstar);
+    // Final: the exact inversion -- every file on the same ground, faced
+    // about, the front rank enclosed between the two guides (349); the
+    // captain on the new right; the file closers at their habitual posts
+    // behind the (new) rear rank
     const newFront = i => add(O0, Rv, -(n - 1 - i)*FW);
+    const posts = fidx => add(newFront(fidx), F, CLOSERD);
+    const postFi = { "1L": this.lt1Fi(), "2L": (this.n1 - 1)/2,
+                     "3S": this.n1 + 1, "4S": this.n1 - 2, "5S": 1 };
+    if(this.men.has("3L")) postFi["3L"] = (this.n1 + n - 1)/2;
     const finals = new Map();
     for(const m of rankAndFile){
       const i = fi.get(m.id);
@@ -3115,57 +3192,98 @@ class CompanyModel{
         ? newFront(i) : add(newFront(i), F, RANKD));
     }
     finals.set("capt", add(newFront(0), Rv, -FW));
-    const T1 = 0.15, T2 = 0.85;
-    const lerp = (p, q, u) => [p[0]+(q[0]-p[0])*u, p[1]+(q[1]-p[1])*u];
-    for(const id of wheelIds){
-      const m = this.men.get(id);
-      const start = m.pos.slice(), fp = faced.get(id), plan = plans.get(id);
-      const we = plan(1), fin = finals.get(id);
-      const fn = t => t < T1 ? lerp(start, fp, t/T1)
-                  : t < T2 ? plan((t - T1)/(T2 - T1))
-                  : lerp(we, fin, (t - T2)/(1 - T2));
-      m.setTimedPath(samplePath(fn, 90));
-    }
-    // the guides: to the flanks of the front rank, standing fast through
-    // the wheel, then passing along the front rank to their proper places
-    // (345, 349): 1S to cover the captain, 2S among the file closers
-    const posts = fidx => add(newFront(fidx), F, CLOSERD);
+    for(const id of closerIds) finals.set(id, posts(postFi[id]));
     const guideFin = {
       "1S": add(finals.get("capt"), F, RANKD),
       "2S": posts(n - 2)
     };
-    const guideSpot = { "1S": rgSpot, "2S": lgSpot };
-    for(const id of ["1S", "2S"]){
+    // move: every man straight to his faced place; the guides to theirs
+    for(const id of wheelIds) this.men.get(id).setPath([shown.get(id)]);
+    this.men.get(pivotId).setPath([Cc]);
+    this.men.get(farId).setPath([farSpot]);
+    this._cm = { toRight: toRight, h: h, h2: h + Math.PI, D0: D0, turn: turn,
+                 wheelIds: wheelIds, plans: plans, tCut: tCut,
+                 finals: finals, guideFin: guideFin,
+                 pivotId: pivotId, farId: farId };
+    this.colDir = D0;
+    this.faceAll(D0);
+    this.men.get("1S").facing = D0 + Math.PI;   // the guides face about (344)
+    this.men.get("2S").facing = D0 + Math.PI;
+    this._perManAnim = false;
+    this._captSpeedMult = 1;
+    this.state = "CMARCH_FACED"; return null;
+  }
+
+  odCountermarchMarch(){
+    if(this.state !== "CMARCH_FACED" || !this._cm)
+      return "MARCH is given with the company faced and doubled for the "+
+             "countermarch, the guides posted and faced about (344-345).";
+    this.clearPaths();
+    const cm = this._cm;
+    const T0 = 0.06;
+    const lerp = (p, q, u) => [p[0]+(q[0]-p[0])*u, p[1]+(q[1]-p[1])*u];
+    // every four wheels in succession around the standing pivot guide and
+    // marches back along the front, the whole shown up to four paces short
+    // of where the leading four is to rest (345-346); anyone not exactly
+    // on his trace regains it as he steps off
+    for(const id of cm.wheelIds){
       const m = this.men.get(id);
-      const start = m.pos.slice(), spot = guideSpot[id], fin = guideFin[id];
-      const wp = add(fin, B, CLOSERD + 1.2);   // along the (new) front side
-      const fn = t => t < T1 ? lerp(start, spot, t/T1)
-                  : t < T2 ? spot
-                  : (t < T2 + 0.09 ? lerp(spot, wp, (t - T2)/0.09)
-                                   : lerp(wp, fin, (t - T2 - 0.09)/(1 - T2 - 0.09)));
-      m.setTimedPath(samplePath(fn, 90));
+      const start = m.pos.slice(), plan = cm.plans.get(id);
+      const fn = t => t < T0 ? lerp(start, plan(0), t/T0)
+                             : plan(((t - T0)/(1 - T0)) * cm.tCut);
+      m.setTimedPath(samplePath(fn, 110));
     }
-    // the file closers pass around the flank away from the pivot to their
-    // habitual places behind the (new) rear rank
-    const sideDir = toRight ? -1 : 1;          // away from the pivot guide
-    const farLat = toRight ? -(n + 1.6) : 2.6;
-    const postFi = { "1L": this.lt1Fi(), "2L": (this.n1 - 1)/2,
-                     "3S": this.n1 + 1, "4S": this.n1 - 2, "5S": 1 };
-    if(this.men.has("3L")) postFi["3L"] = (this.n1 + n - 1)/2;
-    for(const id in postFi){
-      const m = this.men.get(id);
-      const start = m.pos.slice(), fin = posts(postFi[id]);
-      const W1 = add(add(O0, Rv, farLat), B, CLOSERD);
-      const W2 = add(add(O0, Rv, farLat), F, CLOSERD);
-      const fn = t => t < 0.42 ? start
-                  : t < 0.62 ? lerp(start, W1, (t - 0.42)/0.2)
-                  : t < 0.82 ? lerp(W1, W2, (t - 0.62)/0.2)
-                  : lerp(W2, fin, (t - 0.82)/0.18);
-      m.setTimedPath(samplePath(fn, 90));
+    // both guides stand fast (345)
+    this.colDir = cm.D0 + cm.turn;
+    this.faceAll(cm.D0 + cm.turn);
+    this._perManAnim = false;
+    this._captSpeedMult = 1;
+    this.state = "CMARCH_COL"; return null;
+  }
+
+  odCountermarchHalt(){
+    if(this.state !== "CMARCH_COL" || !this._cm)
+      return "'Company -- HALT' is given as the leading file comes four "+
+             "paces from the point where it is to rest, opposite the far "+
+             "guide (345-347).";
+    this.clearPaths();
+    const cm = this._cm;
+    // the leading four covers its last four paces; the rear of the column
+    // closes around the wheel to its place; the whole halts in the column
+    // of fours above its own ground (346-347)
+    for(const id of cm.wheelIds){
+      const m = this.men.get(id), plan = cm.plans.get(id);
+      const fn = t => plan(cm.tCut + t*(1 - cm.tCut));
+      m.setTimedPath(samplePath(fn, 40));
+    }
+    this._perManAnim = false;
+    this._captSpeedMult = 1;
+    this.state = "CMARCH_HALT"; return null;
+  }
+
+  odCountermarchFront(){
+    if(this.state !== "CMARCH_HALT" || !this._cm)
+      return "'FRONT -- Right -- DRESS' follows the halt: the company "+
+             "faces to the front and dresses by the right, enclosed "+
+             "between the two guides (348-349).";
+    this.clearPaths();
+    const cm = this._cm;
+    // the files un-double onto the line -- the exact inversion of the
+    // original -- and the closers dress to their posts (348-349)
+    for(const id of cm.wheelIds)
+      this.men.get(id).setPath([cm.finals.get(id)]);
+    // the guides pass along the (new) front of the rank to their proper
+    // places: 1S to cover the captain, 2S among the file closers (349)
+    const Bv = vec(cm.h + Math.PI);
+    for(const id of ["1S", "2S"]){
+      const m = this.men.get(id), fin = cm.guideFin[id];
+      const wp = add(fin, Bv, CLOSERD + 1.2);
+      m.setPath([wp, fin]);
     }
     for(const m of this.men.values()) m.fileI = null;
-    this.heading = h2;
-    this.faceAll(h2);
+    this.heading = cm.h2;
+    this.faceAll(cm.h2);
+    this._cm = null;
     this._perManAnim = false;
     this._captSpeedMult = 1;
     this.state = "LINE_HALT"; return null;
@@ -3352,6 +3470,308 @@ class CompanyModel{
     this._captSpeedMult = 1;
     this.state = "COL_MARCH"; return null;
   }
+
+  // ------------- FORMING THE COMPANY (before Lesson I) ---------------------
+  // The customary assembly: fall in by height in one rank on the senior
+  // sergeant, count twos, face to the right doubling, front without
+  // undoubling, then post the corporals, file closers and officers, and
+  // tell off in twos anew by rank.  Ends in the exact formation of build().
+  _npf(){ return this._cpl8 ? 2 : 1; }   // new files gained on EACH flank
+  _formPrivates(){ return this.menArr().filter(m => m.role === "private"); }
+  _formCorporals(){
+    return this.menArr().filter(m => m.role === "corporal")
+      .sort((a,b) => parseInt(a.id.slice(2)) - parseInt(b.id.slice(2)));
+  }
+  _formClosers(){
+    return ["1L","2L","3L","2S","3S","4S","5S"]
+      .filter(id => this.men.has(id)).map(id => this.men.get(id));
+  }
+  _formSec(fi){
+    return fi < this.s1 ? 1 : fi < this.n1 ? 2 : fi < this.n1 + this.s3 ? 3 : 4;
+  }
+  // Front-rank posts of the corporals once inserted (mirrors build()).
+  _cplSlots(){
+    const n = this.nFiles, n1 = this.n1;
+    return this._cpl8
+      ? [["C-1",0],["C-2",1],["C-3",n1-2],["C-4",n1-1],
+         ["C-5",n1],["C-6",n1+1],["C-7",n-2],["C-8",n-1]]
+      : [["C-1",0],["C-2",n1-1],["C-3",n1],["C-4",n-1]];
+  }
+  // A timed path built of phases: stand fast until t0 of the first segment,
+  // walk to each point over its [t0,t1] window, stand fast between windows.
+  _phased(m, segs){
+    const p0 = m.pos.slice();
+    const fn = t => {
+      let cur = p0;
+      for(const [a, b, p] of segs){
+        if(t < a) return cur;
+        if(t < b){
+          const u = (t - a) / Math.max(1e-9, b - a);
+          return [cur[0] + (p[0]-cur[0])*u, cur[1] + (p[1]-cur[1])*u];
+        }
+        cur = p;
+      }
+      return cur;
+    };
+    m.setTimedPath(samplePath(fn, 60));
+  }
+  _walkFace(m, dest){
+    if(dist(m.pos, dest) > 1e-6)
+      m.facing = Math.atan2(dest[1]-m.pos[1], dest[0]-m.pos[0]);
+  }
+  odFormStart(){
+    this.clearPaths();
+    this.brokenPairs = []; this._breakSide = null;
+    this._sections = null; this._flankHybrid = false; this._cm = null;
+    this._onFinish = null; this._extraSpeech = null; this._extraAnimMs = 0;
+    this.heading = UP; this.colDir = UP;
+    const nP = this.nPrivates;
+    // a loose crowd centred on the ground where the rank will form
+    const cx = -this._npf() - (nP - 1)/2, cy = 1.2;
+    const rx = Math.max(6, nP * 0.26), ry = 3.4;
+    const placed = [];
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const spot = () => {
+      for(let k = 0; k < 60; k++){
+        const a = rnd(0, Math.PI * 2), r = Math.sqrt(Math.random());
+        const p = [cx + Math.cos(a)*r*rx, cy + Math.sin(a)*r*ry];
+        let ok = true;
+        for(const q of placed) if(dist(p, q) < 0.95){ ok = false; break; }
+        if(ok){ placed.push(p); return p; }
+      }
+      const p = [cx + rnd(-rx, rx), cy + rnd(-ry, ry)];
+      placed.push(p); return p;
+    };
+    for(const m of this.men.values()){
+      m.platoon = null; m.section = null; m.endFacing = null;
+      m.countNum = null;
+      if(m.id === "capt"){
+        m.pos = [cx + rx + 4, cy - ry - 2.2];
+        m.facing = Math.atan2(cy - m.pos[1], cx - m.pos[0]);
+      } else {
+        m.pos = spot();
+        m.facing = rnd(0, Math.PI * 2);
+      }
+      if(m.role === "private")
+        m.desc = "Private No. " + m.label + " — dispersed at ease; he has " +
+                 "not yet fallen in.";
+    }
+    this.state = "FORM_SCATTER"; return null;
+  }
+  odFormFallIn(){
+    if(this.state !== "FORM_SCATTER")
+      return "The company must first be dispersed — press Start.";
+    this.clearPaths();
+    const nP = this.nPrivates, xs = -this._npf();
+    // the senior sergeant takes post: the right flank of the rank to come
+    const s1m = this.men.get("1S");
+    const sPost = [xs + FW, 0];
+    this._walkFace(s1m, sPost); s1m.endFacing = UP;
+    this._phased(s1m, [[0, 0.16, sPost]]);
+    // privates in one rank on his left, by height — i.e. by their numbers
+    for(let j = 0; j < nP; j++){
+      const m = this.men.get("P-" + (j + 1));
+      const dest = [xs - j * FW, 0];
+      const t0 = 0.18 + 0.3 * (((j * 41) % 13) / 13);
+      this._walkFace(m, dest);
+      m.endFacing = UP + 0.72;   // eyes to the right, dressing on the line
+      this._phased(m, [[t0, Math.min(1, t0 + 0.62), dest]]);
+    }
+    // corporals assemble in front of the rank, file closers in rear of it
+    const mid = xs - (nP - 1)/2;
+    const cluster = (list, y0) => {
+      const x0 = mid + (list.length - 1) * 1.3 / 2;
+      list.forEach((m, i) => {
+        const dest = [x0 - i*1.3 + (((i*29)%5)-2)*0.09,
+                      y0 + (((i*17)%5)-2)*0.14];
+        this._walkFace(m, dest);
+        m.endFacing = y0 < 0 ? UP + Math.PI : UP;   // face the rank
+        this._phased(m, [[Math.min(0.5, 0.22 + 0.02*i),
+                          Math.min(1, 0.82 + 0.02*i), dest]]);
+      });
+    };
+    cluster(this._formCorporals(), -3.3);
+    cluster(this._formClosers(), RANKD + 3.4);
+    this.state = "FORM_RANK_EYES"; return null;
+  }
+  odFormFallInFront(){
+    if(this.state !== "FORM_RANK_EYES")
+      return "FRONT is given when the rank is formed, every man with his " +
+             "eyes to the right.";
+    for(const m of this._formPrivates()) m.facing = UP;
+    this.state = "FORM_RANK"; return null;
+  }
+  _formCount(rankMen, exclude){
+    const line = rankMen.filter(m => !exclude || exclude.indexOf(m.id) < 0)
+                        .sort((a,b) => b.pos[0] - a.pos[0]);
+    const step = Math.max(130, Math.min(260, 6500 / line.length));
+    const base = 2600;   // after the command bubble has been read
+    this._extraSpeech = [];
+    line.forEach((m, j) => {
+      m.countNum = (j % 2) + 1;
+      this._extraSpeech.push({
+        id: m.id, text: j % 2 === 0 ? "One!" : "Two!",
+        delayMs: base + j * step, durMs: Math.max(900, step * 3)
+      });
+    });
+    this._extraAnimMs = base + line.length * step + 600;
+    return line;
+  }
+  odFormCount1(){
+    if(this.state !== "FORM_RANK")
+      return "The count is made with the company in one rank, faced to " +
+             "the front.";
+    this._formCount(this._formPrivates());
+    this.state = "FORM_COUNT1"; return null;
+  }
+  odFormRightFace(){
+    if(this.state !== "FORM_COUNT1")
+      return "The rank must first be told off in twos.";
+    this.clearPaths();
+    const xs = -this._npf();
+    const line = this._formPrivates().sort((a,b) => b.pos[0] - a.pos[0]);
+    for(let j = 0; j < line.length; j++){
+      const m = line[j]; m.facing = 0;   // faced to the right (east)
+      const fi = Math.floor(j / 2), closedX = xs - fi * FW;
+      if(j % 2 === 0){
+        // a ONE: pivots in place, then the file closes up to the front
+        if(Math.abs(m.pos[0] - closedX) > 1e-9)
+          this._phased(m, [[0.45, 1, [closedX, 0]]]);
+      } else {
+        // a TWO: steps up and to the right abreast his own one, then closes
+        this._phased(m, [[0.05, 0.35, [xs - 2*fi*FW, RANKD]],
+                         [0.45, 1,    [closedX, RANKD]]]);
+      }
+    }
+    this.state = "FORM_DOUBLED"; return null;
+  }
+  odFormFront2(){
+    if(this.state !== "FORM_DOUBLED")
+      return "FRONT (without undoubling) is given with the company faced " +
+             "to the right, the files doubled.";
+    for(const m of this._formPrivates()) m.facing = UP;
+    this.state = "FORM_TWORANK"; return null;
+  }
+  odFormCorporals(){
+    if(this.state !== "FORM_TWORANK")
+      return "The corporals are posted after the company has faced to the " +
+             "front in two ranks.";
+    this.clearPaths();
+    const npf = this._npf(), xs = -npf;
+    const F = this.nPrivates / 2;    // files before the corporals join
+    const mid = this.n1 - npf;       // files in the right half of the rank
+    const fronts = [], rears = [];
+    for(const m of this._formPrivates()){
+      const j = Math.round(xs - m.pos[0]);
+      (m.pos[1] < RANKD/2 ? fronts : rears)[j] = m;
+    }
+    // 1. the rear rank splits and side-steps npf paces outward
+    for(let j = 0; j < F; j++){
+      const m = rears[j], dx = j < mid ? npf : -npf;
+      this._phased(m, [[0.04, 0.3, [m.pos[0] + dx, RANKD]]]);
+    }
+    // 2. the front-rank men at the division step straight back (still
+    //    facing the front) into the rear-rank places thus vacated
+    for(let j = mid - npf; j < mid + npf; j++){
+      const m = fronts[j];
+      this._phased(m, [[0.34, 0.56, [m.pos[0], RANKD]]]);
+    }
+    // 3. the corporals enter the front rank: those of the centre in the
+    //    places quitted at the division, those of the flanks in the new
+    //    places the side-step has opened on the right and left
+    for(const [id, fi] of this._cplSlots()){
+      const m = this.men.get(id), dest = [-fi * FW, 0];
+      this._walkFace(m, dest); m.endFacing = UP;
+      this._phased(m, [[0.4 + 0.03*(fi % 4), 0.97, dest]]);
+    }
+    // the first sergeant clears the right flank and observes by the captain
+    const s1m = this.men.get("1S"), c = this.men.get("capt");
+    const obs = [c.pos[0] - 1.6, c.pos[1]];
+    this._walkFace(s1m, obs);
+    s1m.endFacing = Math.atan2(-obs[1], (xs - F/2) - obs[0]);
+    this._phased(s1m, [[0.02, 0.3, obs]]);
+    this._onFinish = () => this._formAssignRanks();
+    this.state = "FORM_CPLS"; return null;
+  }
+  _formAssignRanks(){
+    for(const m of this.menArr()){
+      if(m.role !== "private" && m.role !== "corporal") continue;
+      const fi = Math.round(-m.pos[0]);
+      m.rank = m.pos[1] < RANKD/2 ? "front" : "rear";
+      m.platoon = fi < this.n1 ? 1 : 2;
+      m.section = this._formSec(fi);
+    }
+  }
+  odFormPosts(){
+    if(this.state !== "FORM_CPLS")
+      return "The file closers take post after the corporals are in the " +
+             "ranks.";
+    this.clearPaths();
+    const cd = CLOSERD;
+    const dests = [
+      ["1L", [-this.lt1Fi(), cd]],
+      ["2L", [-(this.n1 - 1)/2, cd]],
+      ["3L", [-(this.n1 + this.nFiles - 1)/2, cd]],
+      ["2S", [-(this.nFiles - 2), cd]],
+      ["3S", [-(this.n1 + 1), cd]],
+      ["4S", [-(this.n1 - 2), cd]],
+      ["5S", [-1, cd]]
+    ];
+    let i = 0;
+    for(const [id, dest] of dests){
+      const m = this.men.get(id); if(!m) continue;
+      this._walkFace(m, dest); m.endFacing = UP;
+      this._phased(m, [[0.05 + 0.05*(i++ % 5), 0.72, dest]]);
+    }
+    // the captain and first sergeant, having overseen the whole, return
+    // to their own posts on the right of the company
+    for(const [id, dest] of [["capt", [FW, 0]], ["1S", [FW, RANKD]]]){
+      const m = this.men.get(id);
+      this._walkFace(m, dest); m.endFacing = UP;
+      this._phased(m, [[0.55, 1, dest]]);
+    }
+    this._onFinish = () => this._formAssignStaff();
+    this.state = "FORM_POSTED"; return null;
+  }
+  _formAssignStaff(){
+    const plt = { capt:1, "1S":1, "1L":2, "2L":1, "3L":2,
+                  "2S":2, "3S":2, "4S":1, "5S":1 };
+    for(const id in plt)
+      if(this.men.has(id)) this.men.get(id).platoon = plt[id];
+  }
+  odFormCount2(){
+    if(this.state !== "FORM_POSTED")
+      return "The company is told off anew when every man is at his post.";
+    // both ranks count together; the rear man of each file takes the same
+    // number as his front-rank man
+    const fronts = this._formCount(
+      this.menArr().filter(m => m.rank === "front"), ["capt"]);
+    for(const m of fronts){
+      const rear = this.menArr().find(r => r.rank === "rear" &&
+        r.id !== "1S" && Math.abs(r.pos[0] - m.pos[0]) < 0.3);
+      if(rear) rear.countNum = m.countNum;
+    }
+    this._onFinish = () => this._formFinalize();
+    this.state = "FORM_COUNT2"; return null;
+  }
+  _formFinalize(){
+    for(const m of this.menArr()){
+      if(m.role !== "private" && m.role !== "corporal") continue;
+      const fi = Math.round(-m.pos[0]);
+      const told = m.countNum ? "  In his file he is told off as No. " +
+                   m.countNum + "." : "";
+      if(m.role === "corporal"){
+        m.desc = "Corporal " + m.id.slice(2) + " — posted in the front rank " +
+          "on the flank of the " + (m.platoon === 1 ? "1st" : "2d") +
+          " platoon, according to height (par. 15)." + told;
+      } else {
+        m.desc = "Private No. " + m.label + " — " + m.rank + " rank, file " +
+          (fi + 1) + ", " + (m.platoon === 1 ? "1st" : "2d") +
+          " Platoon, Section " + m.section + "." + told;
+      }
+    }
+    this.state = "LINE_HALT";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3382,6 +3802,144 @@ const TXT_RULES =
 "rank on the right and left of the platoons.";
 
 const BOOK = [
+["FORMING THE COMPANY", [
+  ["To assemble the company",
+   "Before the school of the company can begin, the company must be formed. "+
+   "The men being dispersed at ease upon the ground, the captain, wishing "+
+   "to assemble the company, will direct the senior sergeant to take post "+
+   "upon the point which is to be the right flank of the company.\n\n"+
+   "Press Start to disperse the company upon the field; the captain stands "+
+   "apart, observing. The orders of this section then follow in their "+
+   "sequence, and end with the company formed exactly as it stands at "+
+   "'Reset formation' — ready for Lesson I.",
+   [
+     ["Start (disperse the company)","form_start",
+      "The company is dispersed at ease about the field; the captain "+
+      "stands apart. Every further order of this section proceeds from "+
+      "here. Start may be pressed at any time to begin anew."]
+   ]],
+  ["To fall in",
+   "The senior sergeant, having taken his post, will call in a loud "+
+   "voice: FALL IN ON ME!  Upon this the privates will form in a single "+
+   "rank upon his left, in the order of their height — the tallest next "+
+   "the sergeant, the shortest upon the left of the rank.\n\n"+
+   "Each man, as he comes upon the line, will place himself so that his "+
+   "right elbow touches the left elbow of the man on his right, will cast "+
+   "his eyes to the right to dress himself upon the line, and will so "+
+   "remain until, the rank being full, the sergeant commands FRONT — when "+
+   "every man will turn his head and eyes to the front.\n\n"+
+   "The officers and non-commissioned officers do not fall in with the "+
+   "privates: the four senior corporals (all eight, when eight are "+
+   "present) assemble in front of the rank, and all the others, who are "+
+   "to be the file closers, assemble in rear of it. Were there more "+
+   "non-commissioned officers than the file closing requires, the surplus "+
+   "would fall in with the privates.\n\n"+
+   "(In this simulation the privates' numbers stand for their heights: "+
+   "No. 1 is the tallest man of the company.)",
+   [
+     ["Fall in on me!","form_fallin",
+      "The sergeant posts himself on the right flank; the privates form "+
+      "in one rank upon his left by height (their numbers), elbow to "+
+      "elbow, eyes to the right; the corporals assemble in front of the "+
+      "rank, the file closers in rear of it."],
+     ["FRONT","form_fallin_front",
+      "The rank being full and dressed, every man turns his head and "+
+      "eyes to the front."]
+   ]],
+  ["To count twos",
+   "The rank being formed and faced to the front, the sergeant commands:"+
+   "\n\n1. In each file. 2. Count--TWOS.\n\n"+
+   "At this the man on the right of the rank — not the sergeant, but the "+
+   "man upon his left — calls ONE in a loud voice; the man on his left "+
+   "calls TWO; the next ONE; the next TWO; and so on to the left of the "+
+   "rank, until every man is numbered one or two. Each man will remember "+
+   "his number.",
+   [
+     ["In each file, count--TWOS","form_count1",
+      "The count runs from the right of the rank to the left, each man "+
+      "calling his number in a loud voice."]
+   ]],
+  ["To face the rank to the right, doubling the files",
+   "The sergeant commands:\n\n1. Company. 2. Right--FACE.\n\n"+
+   "At the word FACE the men numbered ONE will face to the right, each "+
+   "pivoting in place. The men numbered TWO will face likewise to the "+
+   "right, and will at once step up and to the right, each placing "+
+   "himself abreast of his own number one. The doubling leaves an "+
+   "interval between the files; the files in rear will therefore march "+
+   "forward and close up, until each stands at its proper distance from "+
+   "the file before it.",
+   [
+     ["Company, Right--FACE","form_rightface",
+      "The ones pivot in place; the twos step up and to the right "+
+      "abreast their ones; the files then close forward upon the head."]
+   ]],
+  ["To face to the front without undoubling",
+   "The sergeant commands:\n\nFRONT.\n\n"+
+   "At this word each man pivots in place to the left, facing the "+
+   "original front. The company thus finds itself in two ranks — the "+
+   "ones forming the front rank, the twos the rear rank, each two "+
+   "covering his own one at the proper distance.",
+   [
+     ["FRONT (without undoubling)","form_front2",
+      "Every man pivots in place to the left; the ones stand as the "+
+      "front rank, the twos as the rear."]
+   ]],
+  ["To post the corporals",
+   "No command is spoken for this movement: each man concerned knows his "+
+   "proper place, the captain and the first sergeant standing by to "+
+   "direct where needful.\n\n"+
+   "The corporals are posted in the front rank, upon the right and left "+
+   "of each platoon; the company must therefore be told into two "+
+   "platoons. The corporals of the centre count the files of the front "+
+   "rank and, dividing by two, find where the division of the platoons "+
+   "will fall.\n\n"+
+   "The rear rank then splits at this point, its right half side-"+
+   "stepping one pace to the right and its left half one pace to the "+
+   "left (two paces, when eight corporals are to be posted). The front-"+
+   "rank men at the division step back into the places thus vacated; the "+
+   "corporals of the centre take the front-rank places these men have "+
+   "quitted; and the corporals of the flanks take the new places which "+
+   "the side-step has opened upon the right and left of the company.\n\n"+
+   "The first sergeant, that the right flank may be clear, withdraws and "+
+   "stands by the captain.",
+   [
+     ["(The corporals take their posts)","form_corporals",
+      "Unspoken. The rear rank splits outward; the centre files fall "+
+      "back; the corporals enter the front rank at the platoon flanks; "+
+      "the sergeant clears the right flank and observes by the captain."]
+   ]],
+  ["To post the file closers, the captain and the first sergeant",
+   "All that remains is to post the remaining officers and non-"+
+   "commissioned officers. It is the duty of each to know his own "+
+   "place: the lieutenants and sergeants take post as file closers, two "+
+   "paces in rear of the rear rank, each opposite his proper file "+
+   "(Title First, pars. 16-22).\n\n"+
+   "The captain and the first sergeant, having overseen the whole, "+
+   "return to their own posts upon the right of the company — the "+
+   "captain on the right of the front rank, the first sergeant covering "+
+   "him in the rear rank.",
+   [
+     ["(The officers take their posts)","form_posts",
+      "Unspoken. The file closers take post two paces behind the rear "+
+      "rank; the captain and first sergeant return to the right of the "+
+      "company."]
+   ]],
+  ["To count twos anew, in each rank",
+   "The company being formed, the last step is to number the men "+
+   "afresh, the corporals now standing in the ranks. The instructor "+
+   "commands:\n\n1. In each rank. 2. Count--TWOS.\n\n"+
+   "The count is made exactly as before, in both ranks at once, "+
+   "beginning upon the right; the two men of each file thus bear the "+
+   "same number, which each will remember, for upon it depend the "+
+   "doublings and the formations by fours in all that follows.",
+   [
+     ["In each rank, count--TWOS","form_count2",
+      "Both ranks count together from the right (the calls are shown "+
+      "upon the front rank); the front and rear man of each file take "+
+      "the same number. The company now stands exactly as at 'Reset "+
+      "formation', ready for Lesson I."]
+   ]]
+]],
 ["LESSON I", [
   ["Article 1: To open ranks",
    "8. The company being at ordered arms, the ranks and file closers well "+
@@ -4402,34 +4960,58 @@ const BOOK = [
    "front; in both cases the subdivisions will wheel by file to the side "+
    "of the front rank.",
    [
-     ["1. Countermarch. 2. Company, right — FACE. 3. By file left. 4. MARCH",
+     ["1. Countermarch. 2. Company, right \u2014 FACE. 3. By file left.",
       "countermarch_right",
       "Given at a halt, in line, as part of a column right in front "+
-      "(343). The company faces to the right without doubling; the two "+
-      "guides post themselves on the flanks of the front rank and face "+
-      "about; the two leading files break to the rear — clearing them to "+
-      "swing around the standing right guide — and the captain conducts "+
-      "the first file (344). At MARCH the guides stand fast while every "+
-      "file wheels 180 degrees in succession over the same ground around "+
-      "the pivot and marches back along the front; the column halts "+
-      "opposite the left guide, fronts, and dresses in between the two "+
-      "guides (345-349). The company thus ends on its own ground, faced "+
-      "about, the front rank still in front and every file in its proper "+
-      "order — the right flank still on the right. Simulation notes: the "+
-      "guides are shown as the 1st and 2d Sergeants, who then pass along "+
-      "the front rank to their habitual places; the captain takes his "+
-      "line-of-battle post on the new right (349's column post before "+
-      "the centre is not shown); the file closers pass around the far "+
-      "flank; the countermarch of the column by platoon (350) is not yet "+
-      "animated."],
-     ["1. Countermarch. 2. Company, left — FACE. 3. By file right. 4. MARCH",
+      "(343). The company faces to the right, the files doubling into "+
+      "the column of fours as in the ordinary face; the two guides face "+
+      "about and post themselves \u2014 the right guide at the wheeling "+
+      "point the column will turn around, the left guide on the left "+
+      "flank of the front rank; and the captain goes to the right of his "+
+      "company and places himself beside the first rank of the column, "+
+      "on its outer flank, to conduct it (344). Simulation notes: the "+
+      "guides are shown as the 1st and 2d Sergeants; the pivot guide "+
+      "stands at the wheeling point itself, so that every four clears "+
+      "him by at least a pace, and the momentary break of the two "+
+      "leading files to the rear (344) \u2014 needed on the ground only "+
+      "to clear a guide standing on the alignment \u2014 is therefore "+
+      "not shown; the countermarch of the column by platoon (350) is "+
+      "not yet animated."],
+     ["1. Countermarch. 2. Company, left \u2014 FACE. 3. By file right.",
       "countermarch_left",
       "The inverse means, for a column left in front (351): the company "+
-      "faces to the left, the two leading files of the left flank break "+
-      "to the rear, and the column wheels by file to the right around "+
-      "the standing left guide — in both cases wheeling by file to the "+
-      "side of the front rank. The result is the same exact inversion on "+
-      "the company's own ground."]
+      "faces to the left, files doubling into the column of fours; the "+
+      "left guide faces about at the wheeling point, the right guide on "+
+      "the right flank of the front rank; and the captain places himself "+
+      "beside the first rank of the column, on its outer flank \u2014 "+
+      "in both cases the company will wheel by file to the side of the "+
+      "front rank."],
+     ["4. MARCH",
+      "cmarch_march",
+      "Both guides stand fast; the company steps out smartly, each four "+
+      "wheeling 180 degrees in succession over the same ground AROUND "+
+      "the standing pivot guide, and directs its march back along the "+
+      "front (345). The march is shown up to the moment the leading "+
+      "four comes four paces from where it is to rest \u2014 the point "+
+      "at which the captain gives 'Company' (346)."],
+     ["1. Company. 2. HALT.",
+      "cmarch_halt",
+      "'Company' is given at four paces from the point where the "+
+      "leading file is to rest (346); at HALT the company halts (347): "+
+      "the leading four opposite the far guide, the rear of the column "+
+      "closing around the wheel to its place, the whole standing in the "+
+      "column of fours above its own ground."],
+     ["3. FRONT. 4. Right \u2014 DRESS.",
+      "cmarch_front",
+      "At FRONT the company faces to the front (348); at Right \u2014 "+
+      "DRESS it dresses by the right, the files un-doubling onto the "+
+      "line so that the front rank is enclosed between the two guides; "+
+      "the guides then pass along the front rank to their proper places "+
+      "(349). The company thus ends on its own ground, faced about, the "+
+      "front rank still in front and every file in its proper order "+
+      "\u2014 the right flank still on the right. Simulation note: the "+
+      "captain takes his line-of-battle post on the new right (349's "+
+      "column post before the centre is not shown)."]
    ]],
   ["Article 5: Being in column by platoon, to form on the right (or left) "+
    "into line of battle",
@@ -4439,6 +5021,15 @@ const BOOK = [
 ];
 
 const ORDER_DISPATCH = {
+  form_start: m => m.odFormStart(),
+  form_fallin: m => m.odFormFallIn(),
+  form_fallin_front: m => m.odFormFallInFront(),
+  form_count1: m => m.odFormCount1(),
+  form_rightface: m => m.odFormRightFace(),
+  form_front2: m => m.odFormFront2(),
+  form_corporals: m => m.odFormCorporals(),
+  form_posts: m => m.odFormPosts(),
+  form_count2: m => m.odFormCount2(),
   open_prep: m => m.odOpenPrep(),
   open_order: m => m.odOpenOrder(),
   open_march: m => m.odOpenMarch(),
@@ -4500,8 +5091,11 @@ const ORDER_DISPATCH = {
   flank_double_4:   m => m.odFlankDouble4(),
   break_sections: m => m.odBreakSections(),
   form_platoons:  m => m.odFormPlatoons(),
-  countermarch_right: m => m.odCountermarch(true),
-  countermarch_left:  m => m.odCountermarch(false),
+  countermarch_right: m => m.odCountermarchFace(true),
+  countermarch_left:  m => m.odCountermarchFace(false),
+  cmarch_march: m => m.odCountermarchMarch(),
+  cmarch_halt:  m => m.odCountermarchHalt(),
+  cmarch_front: m => m.odCountermarchFront(),
   online_right_prep: m => m.odOnLinePrep(true),
   online_left_prep: m => m.odOnLinePrep(false),
   online_right_turn: m => m.odOnLineTurn(),
@@ -4510,6 +5104,15 @@ const ORDER_DISPATCH = {
 };
 
 const STATE_LABEL = {
+  FORM_SCATTER: "Dispersed — the company has not yet formed",
+  FORM_RANK_EYES: "In one rank, dressed to the right — awaiting FRONT",
+  FORM_RANK: "In one rank, faced to the front",
+  FORM_COUNT1: "In one rank, told off in twos",
+  FORM_DOUBLED: "Faced to the right, the files doubled",
+  FORM_TWORANK: "In two ranks — the corporals not yet posted",
+  FORM_CPLS: "In two ranks, corporals posted — the officers not yet at their posts",
+  FORM_POSTED: "Formed — it remains to tell off in twos, by rank",
+  FORM_COUNT2: "Telling off in twos, in each rank",
   LINE_HALT: "In line of battle, at a halt",
   OPEN_PREP: "In line — left guide posted on the left of the front rank",
   OPEN_MARKED: "In line — rear-rank alignment marked",
@@ -4537,7 +5140,10 @@ const STATE_LABEL = {
   ONLINE_READY: "Head of column abreast the marker — awaiting Right turn",
   ONLINE_HALTED: "Fours halted three paces from the line — captain at the right",
   ONLINE_DRESSED: "Dressed on the captain — awaiting Guides—POSTS",
-  FILE_LINE_LEFT: "Formed on the left by file — captain and left guide posted at the left"
+  FILE_LINE_LEFT: "Formed on the left by file — captain and left guide posted at the left",
+  CMARCH_FACED: "Faced for the countermarch — guides posted and faced about, captain by the first rank",
+  CMARCH_COL: "Countermarching by file — the leading four four paces from its rest",
+  CMARCH_HALT: "Halted in the column of fours on its own ground — awaiting FRONT"
 };
 
 if(typeof module !== "undefined" && module.exports){
@@ -4574,6 +5180,12 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   // 1st Lieutenant for the 2d (pars. 179-181, 186-187, 244-245).
   let speech = [];   // [{id, text, t0, dur}]
   const SPEECH_SPEAKERS = {
+    form_start: [],                // no command is spoken
+    form_fallin: ["1S"],           // the forming sergeant calls the company in
+    form_fallin_front: ["1S"],
+    form_count1: ["1S"],
+    form_rightface: ["1S"],
+    form_front2: ["1S"],
     break_dress: ["capt", "1L"],   // each chief dresses his platoon
     break_front: ["capt", "1L"],   // each chief commands FRONT
     form_halt:   ["capt", "1L"]    // each chief halts his platoon on the line
@@ -4709,6 +5321,15 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   const inFlank = inStates("FLANK_FACED", "FLANK_MARCH");
   const inCol   = inStates("COL_HALT", "COL_MARCH");
   const ENABLED_WHEN = {
+    form_start:        () => true,
+    form_fallin:       inStates("FORM_SCATTER"),
+    form_fallin_front: inStates("FORM_RANK_EYES"),
+    form_count1:       inStates("FORM_RANK"),
+    form_rightface:    inStates("FORM_COUNT1"),
+    form_front2:       inStates("FORM_DOUBLED"),
+    form_corporals:    inStates("FORM_TWORANK"),
+    form_posts:        inStates("FORM_CPLS"),
+    form_count2:       inStates("FORM_POSTED"),
     open_prep:        inStates("LINE_HALT"),
     open_order:       inStates("OPEN_PREP"),
     open_march:       inStates("OPEN_MARKED"),
@@ -4774,6 +5395,9 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     form_platoons:     inStates("SEC_MARCH"),
     countermarch_right: inStates("LINE_HALT"),
     countermarch_left:  inStates("LINE_HALT"),
+    cmarch_march: inStates("CMARCH_FACED"),
+    cmarch_halt:  inStates("CMARCH_COL"),
+    cmarch_front: inStates("CMARCH_HALT"),
     online_right_prep: m => inCol(m) && colRightInFront(m) === true,
     online_left_prep:  m => inCol(m) && colRightInFront(m) === false,
     online_right_turn: inStates("ONLINE_READY"),
@@ -4831,6 +5455,18 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
                perMan: !!model._perManAnim,
                maxLen: maxLen };
       model._perManAnim = false;
+    } else if(model._extraAnimMs){
+      // no man stirs, but the order takes time (e.g. counting twos)
+      anim = { t0: performance.now(), dur: model._extraAnimMs };
+    }
+    model._extraAnimMs = 0;
+    // delayed per-man speech scheduled by the model (the count of twos)
+    if(model._extraSpeech){
+      const now = performance.now();
+      for(const e of model._extraSpeech)
+        speech.push({ id: e.id, text: e.text,
+                      t0: now + (e.delayMs || 0), dur: e.durMs || 1200 });
+      model._extraSpeech = null;
     }
     updateState();
   }
@@ -5002,6 +5638,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
         if(!man) continue;
         const [sx, sy] = w2s(man.pos);
         const age = now - s.t0;
+        if(age < 0) continue;   // scheduled but not yet spoken
         const a = age > s.dur - 400 ? Math.max(0, (s.dur - age) / 400) : 1;
         drawSpeech(s.text, sx, sy, 0.42 * P, a, w, h);
       }
