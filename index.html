@@ -139,6 +139,7 @@
   <label class="ctl"><input type="checkbox" id="inCpl8" checked> 8 corporals</label>
   <label class="ctl"><input type="checkbox" id="in3Lt"> 3rd Lieut.</label>
   <label class="ctl">Speed <input type="range" id="inSpeed" min="1" max="10" step="0.5" value="3"></label>
+  <label class="ctl" title="Paces for Extend / Close intervals (skirmishers)">Paces <input type="number" id="inPaces" min="1" max="40" value="5" style="width:3.2em"></label>
   <label class="ctl">Zoom <input type="range" id="inZoom" min="0.4" max="2.2" step="0.05" value="1"></label>
   <label class="ctl"><input type="checkbox" id="inFollow" checked> Follow</label>
   <label class="ctl"><input type="checkbox" id="inUnits" checked> Labels</label>
@@ -186,6 +187,11 @@ const CLOSERD = RANKD + 2.0; // file closers: two paces behind the rear rank
 const OPEN_RANKD = 4.0;      // opened ranks: rear rank 4 paces from front
 const ROUTE_RANKD = 2.2;     // route step: rear rank opens to a full pace (313)
 const MARCH_PACES = 12;
+// skirmisher geometry (Instructions for Skirmishers): man spacing on the
+// deployed line, initial gap between groups, posts of the sergeants and
+// chiefs, the reserve's distance, and the leap-frog bound of the firings
+const SK_SP = 5, SK_GAP0 = 5, SK_NCO = 10, SK_CHIEF = 25, SK_RES = 180,
+      SK_LEAP = 10;
 
 function vec(h){ return [Math.cos(h), Math.sin(h)]; }
 function add(p, v, k){ return [p[0] + v[0]*k, p[1] + v[1]*k]; }
@@ -222,6 +228,7 @@ class Man{
     this.pos = [0,0]; this.facing = UP;
     this.path = null; this.cum = null; this.length = 0; this.timed = false;
     this.fileI = null;
+    this.rush = false;   // finish with the animation regardless of length
     // facing to assume when the current movement completes (or null)
     this.endFacing = null;
   }
@@ -292,6 +299,7 @@ class CompanyModel{
     // GUI-consumed extras (delayed speech, movement-free animation time)
     this._cpl8 = corporals8; this._onFinish = null;
     this._extraSpeech = null; this._extraAnimMs = 0;
+    this._sk = null; this.skirmPaces = 5;
     const sectionOf = i => i < s1 ? 1 : i < n1 ? 2 : i < n1 + s3 ? 3 : 4;
     const fx = i => -i * FW;
     const put = (m, x, y) => { m.pos = [x, y]; this.men.set(m.id, m); this.order.push(m.id); };
@@ -398,6 +406,7 @@ class CompanyModel{
     for(const m of this.men.values()){
       if(m.path){ m.pos = m.path[m.path.length-1]; m.path = null; }
       if(m.endFacing != null){ m.facing = m.endFacing; m.endFacing = null; }
+      m.rush = false;
     }
     this._captSpeedMult = 1;
     if(this._onFinish){ const f = this._onFinish; this._onFinish = null; f(); }
@@ -3471,6 +3480,917 @@ class CompanyModel{
     this.state = "COL_MARCH"; return null;
   }
 
+  // ================= INSTRUCTIONS FOR SKIRMISHERS (after Washburn) =========
+  // The company deployed as skirmishers divides into its two platoons: one
+  // deployed, the other held in reserve.  The deployed platoon divides into
+  // its "comrades in battle" -- groups of four made of two adjacent files
+  // taken in order, and numbered here from the RIGHT of the platoon.  In the
+  // deployed line each group stands in single rank, SK_SP paces from man to
+  // man, the order from the right being: front-rank No.1, rear-rank No.1,
+  // front-rank No.2, rear-rank No.2 (the rear-rank men on the left of their
+  // file leaders).  Adjacent groups begin SK_GAP0 paces apart, which with a
+  // group span of 3*SK_SP makes the book's twenty-pace group interval.
+  //
+  // Bookkeeping lives in this._sk:
+  //   p / q       deployed and reserve platoon numbers
+  //   groups[]    [{files:[{f,r},..], sec}] indexed from the right
+  //   lineMen[]   [{id, g, j, rankKind}]  j = 0..3 from the right of a group
+  //   anchors[]   world position of each group's rightmost line spot
+  //   gap         current interval between adjacent groups (paces)
+  //   cast        {chiefs:[{id,sec,escort}], ncos:[right,left], lead, resFlank}
+  //   resIds      every man belonging to the reserve
+  //   off         {front,rear} rank offsets from the anchors while firing
+  _skR(){ return vec(this.heading + Math.PI/2); }
+  _skF2Id(g){ const fl = this._sk.groups[g].files; return fl[fl.length-1].f; }
+  _skLastJ(g){ return this._sk.groups[g].files.length * 2 - 1; }
+  _skSpot(g, j){
+    return add(this._sk.anchors[g], this._skR(), -SK_SP * j);
+  }
+  _skGroupC(g){
+    const n = this._sk.groups[g].files.length * 2, pts = [];
+    for(let j = 0; j < n; j++) pts.push(this._skSpot(g, j));
+    return centroid(pts);
+  }
+  _skLineCenter(){
+    const ng = this._sk.groups.length;
+    const a = this._skSpot(0, 0), b = this._skSpot(ng-1, this._skLastJ(ng-1));
+    return [(a[0]+b[0])/2, (a[1]+b[1])/2];
+  }
+  // A path of straight legs walked at a shared speed: total budget W paces,
+  // an optional stand-fast "hold" measured in the same paces.  Men whose
+  // route is shorter than W simply finish early -- this is what produces the
+  // successive halts and deployments of the flank method.
+  _skLegs(m, legs, W, hold){
+    hold = hold || 0;
+    const cum = [0];
+    for(let k = 1; k < legs.length; k++)
+      cum.push(cum[k-1] + dist(legs[k-1], legs[k]));
+    const L = cum[cum.length-1];
+    if(L < 1e-9 && !hold) return;
+    m.setTimedPath(samplePath(t => {
+      const dd = Math.min(L, Math.max(0, W * t - hold));
+      for(let k = 1; k < legs.length; k++)
+        if(dd <= cum[k] || k === legs.length - 1){
+          const seg = cum[k] - cum[k-1];
+          const u = seg <= 1e-12 ? 0 : Math.min(1, (dd - cum[k-1]) / seg);
+          return [legs[k-1][0] + (legs[k][0]-legs[k-1][0]) * u,
+                  legs[k-1][1] + (legs[k][1]-legs[k-1][1]) * u];
+        }
+      return legs[legs.length-1];
+    }, 110));
+  }
+  _skDraft(n){
+    const sk = this._sk, R = this._skR();
+    const pool = sk.resIds.map(id => this.men.get(id))
+      .filter(m => m && m.role === "private" && !sk.drafted.has(m.id));
+    const byLeft = (a, b) => dot(a.pos, R) - dot(b.pos, R);
+    // the rear rank furnishes the escorts; the front rank if it must
+    const cand = pool.filter(m => m.rank === "rear").sort(byLeft)
+      .concat(pool.filter(m => m.rank === "front").sort(byLeft));
+    const out = [];
+    for(let i = 0; i < n && i < cand.length; i++){
+      out.push(cand[i].id); sk.drafted.add(cand[i].id);
+    }
+    return out;
+  }
+  _skDescs(){
+    const sk = this._sk;
+    if(sk.descDone) return;
+    sk.descDone = true;
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const grp = sk.groups[o.g];
+      const fl = grp.files[Math.floor(o.j / 2)];
+      const mate = this.men.get(o.rankKind === "front" ? fl.r : fl.f);
+      m.desc = (m.desc || "") + "\n\nDeployed as a skirmisher: comrades-in-" +
+        "battle group " + (o.g + 1) + " (counted from the right of the " +
+        "platoon), " + o.rankKind + "-rank man of his file.  His file " +
+        "partner in the firings is " +
+        (mate.role === "corporal" ? "Corporal " + mate.id.slice(2)
+                                  : "No. " + mate.label) + ".";
+    }
+  }
+  // ---- posts of the sergeants, chiefs of section, reserve and captain ----
+  _skPosts(fresh){
+    const sk = this._sk, F = this.F(), R = this._skR();
+    const ng = sk.groups.length;
+    const C = this._skLineCenter();
+    const walk = (id, dest, far) => {
+      const m = this.men.get(id); if(!m) return;
+      if(dist(m.pos, dest) > 1e-9){
+        m.setPath([dest]);
+        if(far || dist(m.pos, dest) > 28) m.rush = true;
+      }
+      m.facing = this.heading; m.endFacing = this.heading;
+    };
+    // the two sergeants of the line, ten paces in rear of either half
+    const half = Math.max(1, Math.floor(ng / 2));
+    const rpts = [], lpts = [];
+    for(let g = 0; g < ng; g++)
+      (g < half ? rpts : lpts).push(this._skGroupC(g));
+    walk(sk.cast.ncos[0], add(centroid(rpts), F, -SK_NCO));
+    walk(sk.cast.ncos[1], add(centroid(lpts.length ? lpts : rpts), F, -SK_NCO));
+    // chiefs of section, twenty-five paces in rear of their sections
+    for(const c of sk.cast.chiefs){
+      const gis = [];
+      sk.groups.forEach((g, i) => { if(g.sec === c.sec) gis.push(i); });
+      if(!gis.length) continue;
+      const sc = centroid(gis.map(i => this._skGroupC(i)));
+      const dest = add(sc, F, -SK_CHIEF);
+      walk(c.id, dest);
+      if(fresh && !c.escort) c.escort = this._skDraft(4);
+      if(c.escort){
+        const offs = [[F, 1.3], [R, 1.3], [F, -1.3], [R, -1.3]];
+        c.escort.forEach((eid, i) =>
+          walk(eid, add(dest, offs[i][0], offs[i][1]), true));
+      }
+    }
+    // the reserve, one hundred and fifty yards in rear of the centre
+    const resMen = sk.resIds.filter(id => !sk.drafted.has(id))
+      .map(id => this.men.get(id)).filter(Boolean);
+    const resFront = resMen.filter(m => m.rank === "front");
+    const rc = centroid((resFront.length ? resFront : resMen).map(m => m.pos));
+    const target = add(C, F, -SK_RES);
+    const delta = sub(target, rc);
+    if(Math.hypot(delta[0], delta[1]) > 0.05){
+      for(const m of resMen){
+        m.setPath([add(m.pos, delta, 1)]);
+        m.rush = true;
+        if(fresh) m.facing = this.heading + Math.PI;
+        m.endFacing = this.heading;
+      }
+    }
+    if(fresh)
+      for(const c of sk.cast.chiefs) if(c.escort)
+        for(const eid of c.escort){
+          const m = this.men.get(eid);
+          if(m && !m._skHome) m._skHome = add(m.pos, delta, 1);
+        }
+    // the captain, and the first sergeant when he is not a chief of section
+    if(sk.captWith === "reserve"){
+      const cd = add(add(target, F, 1.5), R, 3);
+      walk("capt", cd, true);
+      if(sk.s1Free) walk("1S", add(cd, F, -RANKD), true);
+    } else {
+      const cd = add(C, F, -30);
+      walk("capt", cd, true);
+      if(sk.s1Free) walk("1S", add(cd, R, -1.2), true);
+      const offs = [[F, 1.4], [R, 1.4], [F, -1.4], [R, -1.4]];
+      sk.captEscort.forEach((eid, i) =>
+        walk(eid, add(cd, offs[i][0], offs[i][1]), true));
+    }
+  }
+  // ---- Art. 1 / Art. 2 first command: "(Such) platoon -- as skirmishers" --
+  odSkirmPrep(p){
+    if(p === 1){
+      if(this.state !== "LINE_HALT" && this.state !== "LINE_MARCH")
+        return "The first platoon is deployed forward from the line of " +
+               "battle, halted or marching (use Reset if need be).";
+    } else {
+      if(this.state !== "LINE_HALT")
+        return "The deployment by the flank is made from the line of " +
+               "battle at a halt.";
+    }
+    const marching = this.state === "LINE_MARCH";
+    this.finish(); this.clearPaths();
+    const F = this.F(), R = this._skR(), H = this.heading;
+    const q = p === 1 ? 2 : 1;
+    // the files of the deploying platoon, taken from its right
+    const fronts = this.menArr()
+      .filter(m => m.platoon === p && m.rank === "front" && m.id !== "capt")
+      .sort((a, b) => dot(b.pos, R) - dot(a.pos, R));
+    const rears = this.menArr()
+      .filter(m => m.platoon === p && m.rank === "rear");
+    const files = fronts.map(f => {
+      let best = null, bd = Infinity;
+      for(const r of rears){
+        const d = Math.abs(dot(sub(r.pos, f.pos), R));
+        if(d < bd){ bd = d; best = r; }
+      }
+      return { f: f.id, r: best.id };
+    });
+    const groups = [];
+    for(let i = 0; i < files.length; i += 2)
+      groups.push({ files: files.slice(i, i + 2) });
+    const lineMen = [];
+    groups.forEach((grp, g) => {
+      grp.sec = this.men.get(grp.files[0].f).section;
+      grp.files.forEach((fl, k) => {
+        lineMen.push({ id: fl.f, g, j: 2*k,     rankKind: "front" });
+        lineMen.push({ id: fl.r, g, j: 2*k + 1, rankKind: "rear"  });
+      });
+    });
+    // the cast of sergeants and officers
+    const has3L = this.men.has("3L");
+    let cast;
+    if(p === 1){
+      cast = { chiefs: [ { id: "2L", sec: 1 },
+                         { id: has3L ? "3L" : "1S", sec: 2 } ],
+               ncos: ["5S", "4S"], lead: "1L", resFlank: ["3S", "2S"] };
+    } else {
+      cast = { chiefs: [ { id: "2L", sec: 3 },
+                         { id: has3L ? "3L" : "1S", sec: 4 } ],
+               ncos: ["3S", "2S"], lead: "1L", resFlank: ["5S", "4S"] };
+    }
+    const resIds = [];
+    for(const m of this.menArr())
+      if(m.platoon === q && (m.rank === "front" || m.rank === "rear") &&
+         m.id !== "capt")
+        resIds.push(m.id);
+    resIds.push(cast.lead);
+    for(const id of cast.resFlank) if(this.men.has(id)) resIds.push(id);
+    const resSet = new Set(resIds);
+    const adv = marching ? 3 : 0;        // the skirmish side draws ahead...
+    const resAdv = marching ? 0 : -3;    // ...or the reserve steps back
+    // posts about the deploying platoon
+    const secC = s => centroid(this.menArr()
+      .filter(m => m.section === s && m.rank === "front").map(m => m.pos));
+    const pltFrontC = centroid(fronts.map(m => m.pos));
+    const leftFront = fronts[fronts.length - 1];
+    cast.chiefs.forEach((c, i) => {
+      const m = this.men.get(c.id); if(!m) return;
+      const dest = add(add(secC(c.sec), F, -CLOSERD), F, adv);
+      this._walkFace(m, dest); m.endFacing = H;
+      this._phased(m, [[0.06 + 0.12 * i, 0.62 + 0.12 * i, dest]]);
+    });
+    { // the guide before the centre of the platoon
+      const m = this.men.get(cast.ncos[0]);
+      const dest = add(add(pltFrontC, F, 2), F, adv);
+      this._walkFace(m, dest); m.endFacing = H;
+      this._phased(m, [[0.05, 0.5, dest]]);
+    }
+    { // the guide on the left, as soon as there is room to pass
+      const m = this.men.get(cast.ncos[1]);
+      const dest = add(add(leftFront.pos, R, -1.2), F, adv);
+      this._walkFace(m, dest); m.endFacing = H;
+      this._phased(m, [[0.4, 0.92, dest]]);
+    }
+    { // the reserve's conductor places himself before its centre
+      const m = this.men.get(cast.lead);
+      const qF = this.menArr().filter(x => resSet.has(x.id) &&
+                                           x.rank === "front");
+      const qC = centroid(qF.map(x => x.pos));
+      const dest = add(add(qC, F, resAdv), F, 1.5);
+      this._walkFace(m, dest); m.endFacing = H;
+      this._phased(m, [[0.02, 0.4, dest]]);
+    }
+    // the reserve steps three paces to the rear (or stands while the
+    // skirmish side draws three paces ahead)
+    if(marching){
+      for(const m of this.men.values())
+        if(!resSet.has(m.id) && !m.path) m.setPath([add(m.pos, F, 3)]);
+    } else {
+      for(const id of resIds){
+        const m = this.men.get(id);
+        if(m && !m.path) m.setPath([add(m.pos, F, -3)]);
+      }
+    }
+    this._sk = {
+      p, q, groups, lineMen, resIds, cast,
+      gap: SK_GAP0, anchors: null, deployed: false,
+      firing: false, fireRank: "front", fireMoving: 0, fireCount: 0,
+      off: { front: 0, rear: 0 },
+      captWith: "reserve", captEscort: [],
+      drafted: new Set(), s1Free: has3L, descDone: false
+    };
+    this._extraSpeech = [{
+      id: p === 1 ? "1L" : "2L",
+      text: (p === 1 ? "Second" : "First") +
+            " Platoon \u2014 Backward \u2014 MARCH!",
+      delayMs: 1500, durMs: 2400
+    }];
+    this.state = "SKIRM_PREP";
+    return null;
+  }
+  // ---- Art. 1: "On the left file -- take intervals -- MARCH" -------------
+  odSkirmTakeIntFwd(){
+    if(this.state !== "SKIRM_PREP" || !this._sk || this._sk.p !== 1)
+      return "'On the left file, take intervals' follows 'First platoon, " +
+             "as skirmishers' (Art. 1).";
+    this.clearPaths();
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    const ng = sk.groups.length;
+    const lat = g => dot(this.men.get(this._skF2Id(g)).pos, R);
+    const leftLat = lat(ng - 1);
+    const shift = [];
+    for(let g = 0; g < ng; g++)
+      shift[g] = (leftLat + 20 * (ng - 1 - g)) - lat(g);
+    const maxShift = Math.max(1, ...shift);
+    const VEER = 1.5;                       // lateral paces per forward pace
+    const D = maxShift / VEER + 8;          // forward distance of the march
+    const prof = (p0, s) => t => {
+      const fwd = D * t;
+      return add(add(p0, F, fwd), R, Math.min(s, VEER * fwd));
+    };
+    const secShift = {};
+    sk.groups.forEach((grp, g) => {
+      if(!(grp.sec in secShift)) secShift[grp.sec] = [];
+      secShift[grp.sec].push(shift[g]);
+    });
+    for(const s in secShift)
+      secShift[s] = secShift[s].reduce((a, b) => a + b, 0) /
+                    secShift[s].length;
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      m.setTimedPath(samplePath(prof(m.pos.slice(), shift[o.g]), 90));
+      m.facing = H; m.endFacing = H;
+    }
+    { // the guide of the left conducts the left group straight forward
+      const m = this.men.get(sk.cast.ncos[1]);
+      if(m) m.setTimedPath(samplePath(prof(m.pos.slice(), 0), 60));
+    }
+    { // the guide of the centre keeps the centre of the platoon
+      const m = this.men.get(sk.cast.ncos[0]);
+      const mean = shift.reduce((a, b) => a + b, 0) / shift.length;
+      if(m) m.setTimedPath(samplePath(prof(m.pos.slice(), mean), 90));
+    }
+    for(const c of sk.cast.chiefs){
+      const m = this.men.get(c.id);
+      if(m) m.setTimedPath(samplePath(
+        prof(m.pos.slice(), secShift[c.sec] || 0), 90));
+    }
+    this.state = "SKIRM_TAKING";
+    return null;
+  }
+  // ---- deployment of the groups into the skirmish line -------------------
+  _skDeploy(moving){
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    this.clearPaths();
+    const adv = moving ? 8 : 0;
+    sk.anchors = sk.groups.map((grp, g) => {
+      const f2 = this.men.get(this._skF2Id(g)).pos;
+      return add(add(f2, R, SK_SP * (grp.files.length === 2 ? 2 : 0)), F, adv);
+    });
+    sk.gap = SK_GAP0;
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const dest = this._skSpot(o.g, o.j);
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      m.facing = H; m.endFacing = H;
+    }
+    sk.deployed = true;
+    this._skPosts(true);
+    this._skDescs();
+    this._extraSpeech = (this._extraSpeech || []).concat([{
+      id: sk.cast.lead,
+      text: (sk.p === 1 ? "Second" : "First") +
+            " Platoon \u2014 About \u2014 FACE. To the rear \u2014 MARCH!",
+      delayMs: 900, durMs: 2600
+    }]);
+  }
+  // ---- the overloaded HALT of the skirmish drill -------------------------
+  odSkirmHalt(){
+    const sk = this._sk;
+    if(this.state === "SKIRM_TAKING"){
+      this._skDeploy(false);
+      this.state = "SKIRM_LINE_HALT";
+      return null;
+    }
+    if(this.state === "SKIRM_ADVANCE" || this.state === "SKIRM_RETREAT"){
+      const fwd = this.state === "SKIRM_ADVANCE";
+      if(sk.firing) this._skFireAlign(fwd);
+      else this.clearPaths();
+      sk.fireMoving = 0;
+      this.faceAll(this.heading);
+      this.state = "SKIRM_LINE_HALT";
+      return null;
+    }
+    if(this.state === "SKIRM_FLANK_R" || this.state === "SKIRM_FLANK_L"){
+      this.clearPaths();
+      this.faceAll(this.heading);
+      this.state = "SKIRM_LINE_HALT";
+      return null;
+    }
+    return "Nothing of the skirmish line is marching.";
+  }
+  odSkirmDeployMarch(){
+    if(this.state !== "SKIRM_TAKING")
+      return "The groups deploy on the march only while taking intervals.";
+    this._skDeploy(true);
+    this.state = "SKIRM_ADVANCE";
+    return null;
+  }
+  // ---- Art. 2: to deploy by the flank ------------------------------------
+  odSkirmFlankDeploy(mode){
+    if(this.state !== "SKIRM_PREP" || !this._sk || this._sk.p !== 2)
+      return "The deployment by the flank follows 'Second platoon, as " +
+             "skirmishers' (Art. 2).";
+    this.clearPaths();
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    const ng = sk.groups.length;
+    const standG = mode === "right" ? ng - 1 :
+                   mode === "left"  ? 0      : Math.floor(ng / 2);
+    const f2pos = g => this.men.get(this._skF2Id(g)).pos;
+    const standAnchor = add(f2pos(standG), R,
+      SK_SP * (sk.groups[standG].files.length === 2 ? 2 : 0));
+    sk.anchors = [];
+    for(let g = 0; g < ng; g++)
+      sk.anchors[g] = add(standAnchor, R, 20 * (standG - g));
+    sk.gap = SK_GAP0;
+    // every group slides by the flank in its block, then deploys; a shared
+    // pace makes the groups halt and deploy in succession, as the book has it
+    const plans = [];
+    let W = 1;
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const curEq = add(f2pos(o.g), R,
+        SK_SP * (sk.groups[o.g].files.length === 2 ? 2 : 0));
+      const T = dot(sub(sk.anchors[o.g], curEq), R);
+      const dest = this._skSpot(o.g, o.j);
+      const mid = add(m.pos, R, T);
+      const legs = Math.abs(T) > 0.01 ? [m.pos.slice(), mid, dest]
+                                      : [m.pos.slice(), dest];
+      let L = 0;
+      for(let k = 1; k < legs.length; k++) L += dist(legs[k-1], legs[k]);
+      W = Math.max(W, L);
+      plans.push({ m, legs, T });
+    }
+    for(const pl of plans){
+      this._skLegs(pl.m, pl.legs, 0, 0);   // W patched below
+      pl.m.facing = Math.abs(pl.T) > 0.01
+        ? H + (pl.T > 0 ? 1 : -1) * Math.PI / 2 : H;
+      pl.m.endFacing = H;
+    }
+    // re-issue with the true shared budget
+    for(const pl of plans) this._skLegs(pl.m, pl.legs, W, 0);
+    sk.deployed = true;
+    this._skPosts(true);
+    this._skDescs();
+    this._extraSpeech = [{
+      id: sk.cast.lead,
+      text: "First Platoon \u2014 About \u2014 FACE. To the rear \u2014 MARCH!",
+      delayMs: 900, durMs: 2600
+    }];
+    this.state = "SKIRM_LINE_HALT";
+    return null;
+  }
+  // ---- to extend and to close intervals ----------------------------------
+  odSkirmInterval(extend, byGroup, standRight){
+    const sk = this._sk;
+    if(byGroup){
+      if(this.state !== "SKIRM_ADVANCE")
+        return "The intervals are changed by group while the skirmish " +
+               "line is marching (otherwise, change them by the flank).";
+    } else {
+      if(this.state !== "SKIRM_LINE_HALT")
+        return "The intervals are changed by the flank with the skirmish " +
+               "line at a halt (on the march, change them by group).";
+    }
+    if(sk.firing) return "Cease firing before changing the intervals.";
+    const ng = sk.groups.length;
+    if(ng < 2) return "There is but a single group.";
+    const P = Math.max(1, Math.min(40, Math.round(this.skirmPaces || 5)));
+    let eff = P;
+    if(!extend){
+      eff = Math.min(P, sk.gap - 1);
+      if(eff <= 0)
+        return "The intervals are already closed to a single pace.";
+    }
+    this.clearPaths();
+    const F = this.F(), R = this._skR(), H = this.heading;
+    const sign = extend ? (standRight ? -1 : 1) : (standRight ? 1 : -1);
+    const fwd = byGroup ? 10 : 0;
+    for(let g = 0; g < ng; g++){
+      const k = standRight ? g : (ng - 1 - g);
+      sk.anchors[g] = add(add(sk.anchors[g], R, sign * eff * k), F, fwd);
+    }
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const dest = this._skSpot(o.g, o.j);
+      const k = standRight ? o.g : (ng - 1 - o.g);
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      if(!byGroup && k > 0)
+        m.facing = H + (sign > 0 ? 1 : -1) * Math.PI / 2;
+      else m.facing = H;
+      m.endFacing = H;
+    }
+    sk.gap += extend ? eff : -eff;
+    this._skPosts(false);
+    return null;
+  }
+  // ---- movements of the deployed line ------------------------------------
+  _skTranslate(v, facing){
+    const sk = this._sk, H = this.heading;
+    this.clearPaths();
+    sk.anchors = sk.anchors.map(a => add(a, v, 1));
+    for(const m of this.men.values()){
+      m.setPath([add(m.pos, v, 1)]);
+      m.facing = facing == null ? H : facing;
+      if(facing != null && facing !== H) m.endFacing = null;
+      else m.endFacing = H;
+    }
+  }
+  odSkirmForward(){
+    if(this.state !== "SKIRM_LINE_HALT" && this.state !== "SKIRM_ADVANCE")
+      return "'Forward' is given to the deployed line, halted or already " +
+             "advancing.";
+    if(this._sk.firing)
+      return "Cease firing before resuming the march (the advance under " +
+             "fire is made with 'Commence firing' while advancing).";
+    const F = this.F();
+    this._skTranslate([F[0] * MARCH_PACES, F[1] * MARCH_PACES], null);
+    this.state = "SKIRM_ADVANCE";
+    return null;
+  }
+  odSkirmRetreat(){
+    if(this.state !== "SKIRM_LINE_HALT" && this.state !== "SKIRM_RETREAT")
+      return "'In retreat' is given to the deployed line, halted or " +
+             "already retiring.";
+    if(this._sk.firing)
+      return "Cease firing before retiring (the retreat under fire is " +
+             "made with 'Commence firing' while retreating).";
+    const F = this.F();
+    this._skTranslate([-F[0]*MARCH_PACES, -F[1]*MARCH_PACES],
+                      this.heading + Math.PI);
+    this.state = "SKIRM_RETREAT";
+    return null;
+  }
+  odSkirmFlankMarch(toRight){
+    const want = toRight ? "SKIRM_FLANK_R" : "SKIRM_FLANK_L";
+    if(this.state !== "SKIRM_LINE_HALT" && this.state !== want)
+      return "The march by the flank is begun from the halted skirmish " +
+             "line (halt and face front before changing flank).";
+    if(this._sk.firing) return "Cease firing before marching by the flank.";
+    const R = this._skR();
+    const v = [R[0] * (toRight ? MARCH_PACES : -MARCH_PACES),
+               R[1] * (toRight ? MARCH_PACES : -MARCH_PACES)];
+    this._skTranslate(v, this.heading + (toRight ? 1 : -1) * Math.PI / 2);
+    this.state = want;
+    return null;
+  }
+  odSkirmWheel(toRight){
+    if(this.state !== "SKIRM_LINE_HALT" && this.state !== "SKIRM_ADVANCE")
+      return "The wheel is made with the line halted or advancing.";
+    const sk = this._sk;
+    if(sk.firing) return "Cease firing before wheeling.";
+    this.clearPaths();
+    const ng = sk.groups.length;
+    const a = (toRight ? 1 : -1) * Math.PI / 4;
+    const pivot = toRight ? this._skSpot(0, 0)
+                          : this._skSpot(ng - 1, this._skLastJ(ng - 1));
+    const oldH = this.heading;
+    sk.anchors = sk.anchors.map(p => rotAbout(p, pivot, a));
+    this.heading = oldH + a;
+    const H = this.heading;
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const p0 = m.pos.slice();
+      if(dist(p0, pivot) > 0.05)
+        m.setTimedPath(samplePath(t => rotAbout(p0, pivot, a * t), 48));
+      m.endFacing = H;
+    }
+    // the sergeants place themselves on the flanks to mark the alignment
+    const F = this.F();
+    const flank = g => add(this._skGroupC(g), F, -SK_NCO);
+    for(const [i, g] of [[0, toRight ? 0 : ng - 1],
+                         [1, toRight ? ng - 1 : 0]]){
+      const m = this.men.get(sk.cast.ncos[i]); if(!m) continue;
+      const dest = flank(g);
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      m.facing = H; m.endFacing = H;
+    }
+    // chiefs, escorts, the captain's party and the reserve conform
+    this._skPosts(false);
+    return null;
+  }
+  // ---- Art. 3: the firings ------------------------------------------------
+  odSkirmFireStart(){
+    const sk = this._sk;
+    const ok = ["SKIRM_LINE_HALT", "SKIRM_ADVANCE", "SKIRM_RETREAT"];
+    if(!sk || !sk.deployed || ok.indexOf(this.state) < 0)
+      return "'Commence firing' is given to the deployed skirmish line " +
+             "(halted, advancing, or retreating).";
+    if(sk.firing) return "The line is already firing.";
+    sk.firing = true; sk.fireCount = 0; sk.fireRank = "front";
+    sk.fireMoving = this.state === "SKIRM_ADVANCE" ? 1 :
+                    this.state === "SKIRM_RETREAT" ? -1 : 0;
+    sk.off = { front: 0, rear: 0 };
+    for(const o of sk.lineMen) this.men.get(o.id).facing = this.heading;
+    this._skFireCycle();
+    return null;
+  }
+  _skFireCycle(){
+    const sk = this._sk;
+    if(!sk || !sk.firing || !sk.lineMen.length) return;
+    this.clearPaths();
+    const F = this.F();
+    const fire = sk.fireRank, other = fire === "front" ? "rear" : "front";
+    this._shots = [];
+    this._extraCues = [];
+    if(sk.fireCount > 0)
+      for(const o of sk.lineMen) if(o.rankKind === other)
+        this._extraCues.push({ id: o.id, text: "Ready!",
+          delayMs: 120 + Math.random() * 500, durMs: 950 });
+    for(const o of sk.lineMen) if(o.rankKind === fire)
+      this._shots.push({ id: o.id, delayMs: 650 + Math.random() * 950 });
+    if(sk.fireMoving === 0){
+      this._extraAnimMs = 2600 + Math.random() * 500;
+    } else if(sk.fireMoving === 1){
+      // the loaded rank passes the firing rank and halts ten paces beyond
+      const dNew = sk.off[fire] + SK_LEAP;
+      const step = dNew - sk.off[other];
+      for(const o of sk.lineMen) if(o.rankKind === other){
+        const m = this.men.get(o.id);
+        m.setPath([add(m.pos, F, step)]);
+        m.facing = this.heading; m.endFacing = this.heading;
+      }
+      sk.off[other] = dNew;
+    } else {
+      // in retreat: the firing rank fires, then falls back past its comrades
+      if(sk.fireCount === 0){
+        for(const o of sk.lineMen) if(o.rankKind === other){
+          const m = this.men.get(o.id);
+          m.setPath([add(m.pos, F, -SK_LEAP)]);
+          m.facing = this.heading; m.endFacing = this.heading;
+        }
+        sk.off[other] = -SK_LEAP;
+      }
+      const dNew = sk.off[other] - SK_LEAP;
+      const drop = dNew - sk.off[fire];
+      for(const o of sk.lineMen) if(o.rankKind === fire){
+        const m = this.men.get(o.id);
+        this._skLegs(m, [m.pos.slice(), add(m.pos, F, drop)],
+                     Math.abs(drop) + 6, 6);
+        m.facing = this.heading; m.endFacing = this.heading;
+      }
+      sk.off[fire] = dNew;
+    }
+    sk.fireRank = other;
+    sk.fireCount++;
+  }
+  _skFireAlign(fwd){
+    const sk = this._sk, F = this.F(), H = this.heading;
+    const T = fwd ? Math.max(sk.off.front, sk.off.rear)
+                  : Math.min(sk.off.front, sk.off.rear);
+    sk.anchors = sk.anchors.map(a => add(a, F, T));
+    this.clearPaths();
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const dest = this._skSpot(o.g, o.j);
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      m.facing = H; m.endFacing = H;
+    }
+    sk.off = { front: 0, rear: 0 };
+    this._skPosts(false);
+  }
+  odSkirmCease(){
+    const sk = this._sk;
+    if(!sk || !sk.firing) return "The line is not firing.";
+    sk.firing = false;
+    if(sk.fireMoving) this._skFireAlign(sk.fireMoving > 0);
+    sk.fireMoving = 0; sk.fireCount = 0;
+    return null;
+  }
+  // ---- Art. 4: the rally --------------------------------------------------
+  odSkirmRally4(){
+    if(this.state !== "SKIRM_LINE_HALT")
+      return "The rally by fours is made from the deployed line at a halt " +
+             "(halt the line first).";
+    this.clearPaths();
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    sk.fireMoving = 0;
+    const rr = 0.95;
+    const centers = [];
+    const put = (id, dest, face) => {
+      const m = this.men.get(id);
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      m.facing = H; m.endFacing = face;
+    };
+    sk.groups.forEach((grp, g) => {
+      const two = grp.files.length === 2;
+      const fm = this.men.get(this._skF2Id(g));
+      const C = add(fm.pos, F, -rr);
+      centers[g] = C;
+      if(two){
+        put(grp.files[1].f, add(C, F, rr),  H);                 // front point
+        put(grp.files[1].r, add(C, R, -rr), H - Math.PI / 2);   // left point
+        put(grp.files[0].f, add(C, F, -rr), H + Math.PI);       // rear point
+        put(grp.files[0].r, add(C, R, rr),  H + Math.PI / 2);   // right point
+      } else {
+        put(grp.files[0].f, add(C, F, rr),  H);
+        put(grp.files[0].r, add(C, F, -rr), H + Math.PI);
+      }
+    });
+    sk.rallyC = centers;
+    // the sergeants throw themselves into the nearest groups (a fifth man)
+    const used = new Set();
+    for(const nid of sk.cast.ncos){
+      const m = this.men.get(nid); if(!m) continue;
+      let bg = -1, bd = Infinity;
+      centers.forEach((c, g) => {
+        if(used.has(g)) return;
+        const d = dist(m.pos, c);
+        if(d < bd){ bd = d; bg = g; }
+      });
+      if(bg >= 0){
+        used.add(bg);
+        m.setPath([centers[bg]]);
+        m.facing = H; m.endFacing = H;
+      }
+    }
+    // the chiefs of section, and the captain if he is forward, rally on
+    // their own escorts
+    this._skTightenEscorts(rr);
+    this.state = "SKIRM_RALLY4";
+    return null;
+  }
+  _skTightenEscorts(r){
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    const tight = (cid, esc) => {
+      const cm = this.men.get(cid); if(!cm || !esc) return;
+      const C = cm.pos.slice();
+      const offs = [[F, r, H], [R, r, H + Math.PI / 2],
+                    [F, -r, H + Math.PI], [R, -r, H - Math.PI / 2]];
+      esc.forEach((eid, i) => {
+        const m = this.men.get(eid); if(!m) return;
+        const dest = add(C, offs[i][0], offs[i][1]);
+        if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+        m.facing = H; m.endFacing = offs[i][2];
+      });
+    };
+    for(const c of sk.cast.chiefs) tight(c.id, c.escort);
+    if(sk.captWith === "line" && sk.captEscort.length)
+      tight("capt", sk.captEscort);
+  }
+  odSkirmRedeploy(){
+    if(this.state !== "SKIRM_RALLY4")
+      return "'Deploy as skirmishers' re-extends the groups rallied by " +
+             "fours.";
+    this.clearPaths();
+    const sk = this._sk, H = this.heading;
+    for(const o of sk.lineMen){
+      const m = this.men.get(o.id);
+      const dest = this._skSpot(o.g, o.j);
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      m.facing = H; m.endFacing = H;
+    }
+    this._skPosts(false);
+    this._skTightenEscorts(1.3);
+    this.state = "SKIRM_LINE_HALT";
+    return null;
+  }
+  odSkirmRallySec(){
+    if(this.state !== "SKIRM_LINE_HALT" && this.state !== "SKIRM_RALLY4")
+      return "The rally by section is made from the skirmish line, or from " +
+             "the groups rallied by fours.";
+    this.clearPaths();
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    sk.firing = false; sk.fireMoving = 0; sk.fireCount = 0;
+    const rr = 0.95;
+    const put = (id, dest, face) => {
+      const m = this.men.get(id); if(!m) return;
+      if(dist(m.pos, dest) > 1e-9) m.setPath([dest]);
+      m.facing = H; m.endFacing = face;
+    };
+    const ringSlot = (C, k) => {
+      let ring = 0, idx = k, cap = 8;
+      while(idx >= cap){ idx -= cap; ring++; cap = 8 + ring * 4; }
+      const na = 8 + ring * 4;
+      const a0 = H + (ring % 2 ? Math.PI / na : 0);
+      const ang = a0 + idx * 2 * Math.PI / na;
+      return { p: add(C, vec(ang), 2.1 + ring * 1.15), face: ang };
+    };
+    const secs = [];
+    sk.groups.forEach(g => { if(secs.indexOf(g.sec) < 0) secs.push(g.sec); });
+    sk.mass = {}; sk.massK = {};
+    for(const s of secs){
+      const gis = [];
+      sk.groups.forEach((g, i) => { if(g.sec === s) gis.push(i); });
+      const core = gis[Math.floor(gis.length / 2)];
+      const grp = sk.groups[core];
+      const fm = this.men.get(this._skF2Id(core));
+      const C = add(fm.pos, F, -rr);
+      sk.mass[s] = C;
+      const two = grp.files.length === 2;
+      if(two){
+        put(grp.files[1].f, add(C, F, rr),  H);
+        put(grp.files[1].r, add(C, R, -rr), H - Math.PI / 2);
+        put(grp.files[0].f, add(C, F, -rr), H + Math.PI);
+        put(grp.files[0].r, add(C, R, rr),  H + Math.PI / 2);
+      } else {
+        put(grp.files[0].f, add(C, F, rr),  H);
+        put(grp.files[0].r, add(C, F, -rr), H + Math.PI);
+      }
+      // the chief of the section to the heart of the mass
+      const chief = sk.cast.chiefs.find(c => c.sec === s);
+      const others = [];
+      if(chief){
+        put(chief.id, C, H);
+        if(chief.escort) others.push(...chief.escort);
+      }
+      for(const i of gis) if(i !== core)
+        for(const fl of sk.groups[i].files) others.push(fl.f, fl.r);
+      others.sort((a, b) =>
+        dist(this.men.get(a).pos, C) - dist(this.men.get(b).pos, C));
+      let k = 0;
+      for(const id of others){
+        const sl = ringSlot(C, k++);
+        put(id, sl.p, sl.face);
+      }
+      sk.massK[s] = k;
+    }
+    // the sergeants, and the captain's party if forward, join the nearest mass
+    const joiners = sk.cast.ncos.slice();
+    if(sk.captWith === "line"){
+      joiners.push("capt");
+      if(sk.s1Free) joiners.push("1S");
+      joiners.push(...sk.captEscort);
+    }
+    for(const id of joiners){
+      const m = this.men.get(id); if(!m) continue;
+      let bs = null, bd = Infinity;
+      for(const s of secs){
+        const d = dist(m.pos, sk.mass[s]);
+        if(d < bd){ bd = d; bs = s; }
+      }
+      if(bs != null){
+        const sl = ringSlot(sk.mass[bs], sk.massK[bs]++);
+        put(id, sl.p, sl.face);
+      }
+    }
+    this.state = "SKIRM_RALLYSEC";
+    return null;
+  }
+  odSkirmFormSec(){
+    if(this.state !== "SKIRM_RALLYSEC")
+      return "'Form sections' re-forms and re-deploys the rallied sections.";
+    this.clearPaths();
+    const sk = this._sk, F = this.F(), R = this._skR(), H = this.heading;
+    const ng = sk.groups.length;
+    const secs = Object.keys(sk.mass).map(Number);
+    const cs = secs.map(s => sk.mass[s]);
+    // a fresh line ten paces before the foremost mass, centred between them
+    const L = Math.max(...cs.map(c => dot(c, F))) + 10;
+    const cLat = cs.reduce((a, c) => a + dot(c, R), 0) / cs.length;
+    sk.gap = SK_GAP0;
+    const a0lat = cLat + ((ng - 1) * 20 + 3 * SK_SP) / 2;
+    sk.anchors = [];
+    for(let g = 0; g < ng; g++){
+      const lat = a0lat - 20 * g;
+      sk.anchors[g] = [F[0] * L + R[0] * lat, F[1] * L + R[1] * lat];
+    }
+    // each section re-forms its two ranks at the mass, moves out, deploys
+    for(const s of secs){
+      const gis = [];
+      sk.groups.forEach((g, i) => { if(g.sec === s) gis.push(i); });
+      const massC = sk.mass[s];
+      let nf = 0;
+      for(const i of gis) nf += sk.groups[i].files.length;
+      let fi = 0;
+      for(const i of gis)
+        for(const fl of sk.groups[i].files){
+          const latOff = ((nf - 1) / 2 - fi) * FW;
+          const fSpot = add(add(massC, R, latOff), F, 0.9);
+          const rSpot = add(fSpot, F, -RANKD);
+          const om = sk.lineMen.filter(o => o.id === fl.f || o.id === fl.r);
+          for(const o of om){
+            const m = this.men.get(o.id);
+            const cs0 = o.rankKind === "front" ? fSpot : rSpot;
+            m.setPath([cs0, add(cs0, F, 5), this._skSpot(o.g, o.j)]);
+            m.facing = H; m.endFacing = H;
+          }
+          fi++;
+        }
+    }
+    this._skPosts(false);
+    this._skTightenEscorts(1.3);
+    this.state = "SKIRM_LINE_HALT";
+    return null;
+  }
+  // ---- the captain's post -------------------------------------------------
+  odSkirmCapt(toLine){
+    const sk = this._sk;
+    if(this.state !== "SKIRM_LINE_HALT")
+      return "The captain shifts his post with the skirmish line at a halt.";
+    if(sk.firing) return "Cease firing first.";
+    if(toLine === (sk.captWith === "line"))
+      return toLine ? "The captain is already forward with his escort."
+                    : "The captain is already with the reserve.";
+    this.clearPaths();
+    if(toLine){
+      sk.captEscort = this._skDraft(4);
+      for(const eid of sk.captEscort){
+        const m = this.men.get(eid);
+        if(m) m._skHome = m.pos.slice();
+      }
+      sk.captWith = "line";
+    } else {
+      for(const eid of sk.captEscort){
+        const m = this.men.get(eid);
+        if(m && m._skHome){
+          m.setPath([m._skHome]); m.rush = true;
+          m.facing = this.heading; m.endFacing = this.heading;
+          m._skHome = null;
+        }
+        sk.drafted.delete(eid);
+      }
+      sk.captEscort = [];
+      sk.captWith = "reserve";
+    }
+    this._skPosts(false);
+    return null;
+  }
+
   // ------------- FORMING THE COMPANY (before Lesson I) ---------------------
   // The customary assembly: fall in by height in one rank on the senior
   // sergeant, count twos, face to the right doubling, front without
@@ -3524,6 +4444,7 @@ class CompanyModel{
     this.brokenPairs = []; this._breakSide = null;
     this._sections = null; this._flankHybrid = false; this._cm = null;
     this._onFinish = null; this._extraSpeech = null; this._extraAnimMs = 0;
+    this._sk = null;
     this.heading = UP; this.colDir = UP;
     const nP = this.nPrivates;
     // a loose crowd centred on the ground where the rank will form
@@ -5017,6 +5938,332 @@ const BOOK = [
    "into line of battle",
    "1. On the right, into line. 2. Guide right ... (Not animated in this "+
    "version.)", []]
+]],
+["INSTRUCTIONS FOR SKIRMISHERS", [
+  ["Of skirmishers in general \u2014 comrades in battle",
+   "(After Washburn's instructions for the skirmish drill of a single "+
+   "company.)\n\n"+
+   "When a company is deployed as skirmishers it is divided into its two "+
+   "platoons: one platoon is deployed upon the line, the other is held in "+
+   "reserve.  The deployed platoon is divided into groups of four men \u2014 "+
+   "'comrades in battle' \u2014 each group being two adjacent files taken in "+
+   "order along the line; the men of a group must know each other and stay "+
+   "together.  In this simulation the groups are numbered from the RIGHT of "+
+   "the platoon, and if the platoon counts an odd number of files the last "+
+   "(left) group is a short group of a single file.\n\n"+
+   "In the deployed line each group stands in single rank at five paces "+
+   "from man to man, the rear-rank men on the left of their file leaders, "+
+   "so that from the right the order of a group is: front No. 1, rear No. "+
+   "1, front No. 2, rear No. 2.  Adjacent groups begin five paces apart, "+
+   "which with the span of a group makes the book's interval of twenty "+
+   "paces from group to group.\n\n"+
+   "When the men deploy, the two sergeants of the line take post ten paces "+
+   "in rear of it; the chiefs of section twenty-five paces in rear of the "+
+   "centres of their sections, each with an escort of four men drawn from "+
+   "the reserve; and the reserve platoon takes post one hundred and fifty "+
+   "yards in rear of the centre of the line.  The captain usually attaches "+
+   "himself to the reserve, but may move out behind the line with a small "+
+   "escort.  The rifles are carried at right shoulder shift and bayonets "+
+   "are not fixed (not represented in this simulation).\n\n"+
+   "Simulation notes: the reserve's long marches are shown at the double "+
+   "so that they finish with the rest of the movement; the deployments "+
+   "cover much ground, so raise the Speed slider if they seem slow.  Use "+
+   "Reset formation to leave the skirmish drill.", []],
+  ["Article 1: To deploy forward",
+   "The company being in line of battle, halted or marching, to deploy the "+
+   "first platoon forward the captain commands:\n\n1. First Platoon. 2. As "+
+   "Skirmishers.\n\nThe 2d lieutenant places himself behind the centre of "+
+   "the first section; the 5th sergeant in front of the centre of the "+
+   "platoon; the 4th sergeant moves to the left of the platoon as soon as "+
+   "there is room to pass; the 3d lieutenant (or, if there is none, the "+
+   "1st sergeant) places himself behind the centre of the second section.  "+
+   "Meanwhile the 1st lieutenant places himself in front of the second "+
+   "platoon and commands: Second Platoon \u2014 Backward \u2014 MARCH, "+
+   "taking it three paces to the rear (if the company is marching, the "+
+   "second platoon is halted and the first draws three paces ahead "+
+   "instead).\n\nThe captain then commands:\n\n1. On the left file. 2. "+
+   "Take Intervals. 3. MARCH.\n\nThe left group of four, conducted by the "+
+   "4th sergeant, marches straight forward; the rest of the platoon "+
+   "marches forward veering to the right, and as each interval of twenty "+
+   "paces opens the next group breaks off and marches parallel to the "+
+   "first.  When the whole are at their intervals the captain halts the "+
+   "platoon, and upon halting the groups deploy of themselves into the "+
+   "skirmish line at five paces from man to man \u2014 the even-numbered "+
+   "front-rank man of each group standing fast and the rest deploying on "+
+   "him, the rear-rank men on the left of their file leaders.  The "+
+   "captain may also order the groups to deploy without halting.",
+   [
+     ["1. First Platoon. 2. As Skirmishers.", "skirm1_prep",
+      "The staff take their posts about the first platoon: 2d lieutenant "+
+      "behind the centre of the first section, 3d lieutenant (or the 1st "+
+      "sergeant) behind the centre of the second, the 5th sergeant before "+
+      "the centre, the 4th sergeant to the left when there is room.  The "+
+      "1st lieutenant steps before the second platoon and takes it three "+
+      "paces to the rear (from the march, the first platoon draws three "+
+      "paces ahead instead).  Given in line of battle, halted or "+
+      "marching."],
+     ["1. On the left file. 2. Take Intervals. 3. MARCH.", "skirm_takeint_fwd",
+      "The left group, conducted by the 4th sergeant, marches straight "+
+      "forward; the rest veer to the right, each group breaking off in "+
+      "succession as its interval of twenty paces opens, until the groups "+
+      "march abreast at their intervals.  This movement covers a great "+
+      "deal of ground \u2014 raise the Speed slider for comfort.  The "+
+      "reserve stands fast."],
+     ["1. First Platoon. 2. HALT.", "skirm_halt",
+      "The platoon halts, and upon halting the groups deploy of "+
+      "themselves into the skirmish line, five paces from man to man.  "+
+      "The sergeants then fall back ten paces behind the line; the "+
+      "chiefs of section take post twenty-five paces behind their "+
+      "sections, each drawing an escort of four men from the reserve; "+
+      "the reserve marches (shown at the double) to its post one "+
+      "hundred and fifty yards in rear of the centre; and the captain "+
+      "attaches himself to the reserve."],
+     ["Deploy without halting", "skirm_deploy_march",
+      "The same deployment made on the march: the groups deploy into "+
+      "the skirmish line without checking the advance, and the line "+
+      "continues to move forward.  The sergeants, chiefs, escorts and "+
+      "reserve take the same posts as upon halting."],
+     ["The captain moves out with his escort", "skirm_capt_escort",
+      "Instead of remaining with the reserve, the captain may take an "+
+      "escort of four men (and the 1st sergeant, when the latter is not "+
+      "acting as a chief of section) and place himself some thirty "+
+      "paces in rear of the centre of the line, whence he can direct "+
+      "the skirmishers himself.  Given with the line halted."],
+     ["The captain attaches himself to the reserve", "skirm_capt_reserve",
+      "The captain (with the 1st sergeant) returns to the reserve \u2014 "+
+      "his usual station \u2014 and his escort re-enters the ranks of "+
+      "the reserve.  Given with the line halted."]
+   ]],
+  ["Article 2: To deploy by the flank",
+   "The company being in line of battle at a halt, to deploy the second "+
+   "platoon by the flank the captain commands:\n\n1. Second Platoon. 2. As "+
+   "Skirmishers.\n\nThe 2d lieutenant orders the first platoon three paces "+
+   "to the rear, as in Art. 1.  The captain then commands:\n\n1. By the "+
+   "right flank. 2. Take Intervals. 3. MARCH.\n\nThe platoon faces to the "+
+   "right \u2014 the files do NOT double \u2014 and marches by the flank; "+
+   "the left group of four stands fast, and each following group halts in "+
+   "succession as its interval of twenty paces opens, deploying into line "+
+   "the moment it halts.  While the second platoon is deploying, the 1st "+
+   "lieutenant faces the first platoon about and marches it to its post "+
+   "in reserve.\n\nThe movement may equally be made By the left flank "+
+   "(the right group standing fast, the platoon marching to the left), or "+
+   "By the right and left flanks (the centre group standing fast and the "+
+   "wings marching outward).  The platoons may also exchange roles; only "+
+   "the usual method is animated here.\n\nSimulation note: Washburn "+
+   "details the posts of the staff only for Art. 1.  Here they are "+
+   "mirrored: the 2d lieutenant and the 3d lieutenant (or 1st sergeant) "+
+   "act as chiefs of the third and fourth sections, the 3d and 2d "+
+   "sergeants become the sergeants of the line, the 5th and 4th "+
+   "sergeants remain with the reserve, and the 1st lieutenant conducts "+
+   "the reserve.",
+   [
+     ["1. Second Platoon. 2. As Skirmishers.", "skirm2_prep",
+      "The staff take posts about the second platoon (see the note on "+
+      "the mirrored casting), and the 2d lieutenant takes the first "+
+      "platoon three paces to the rear.  Given in line of battle at a "+
+      "halt only."],
+     ["1. By the right flank. 2. Take Intervals. 3. MARCH.", "skirm_flank_right",
+      "The platoon faces to the right without doubling and marches by "+
+      "the flank; the left group stands fast and deploys at once, and "+
+      "each following group halts and deploys in succession as its "+
+      "twenty-pace interval opens.  Meanwhile the 1st lieutenant faces "+
+      "the first platoon about and conducts it (shown at the double) to "+
+      "its post in reserve, and the sergeants, chiefs and escorts take "+
+      "their posts."],
+     ["1. By the left flank. 2. Take Intervals. 3. MARCH.", "skirm_flank_left",
+      "The same movement to the left: the right group stands fast, the "+
+      "platoon faces to the left and marches by the flank, each group "+
+      "halting and deploying in succession as its interval opens."],
+     ["1. By the right and left flanks. 2. Take Intervals. 3. MARCH.",
+      "skirm_flank_center",
+      "The centre group stands fast; the groups of the right wing face "+
+      "to the right and those of the left wing to the left, each "+
+      "halting and deploying in succession as its interval opens \u2014 "+
+      "the line extending in both directions at once."]
+   ]],
+  ["To extend and to close intervals",
+   "The intervals between the groups may be changed at any time; the "+
+   "five-pace spacing WITHIN each group never changes.  Set the number of "+
+   "paces with the Paces box in the toolbar above.\n\nThe line being at a "+
+   "halt, the captain commands: 1. By the left (right) flank (so many "+
+   "paces). 2. Extend (Close) Intervals. 3. MARCH.  To EXTEND by the left "+
+   "flank, the right group stands fast and every other group moves to the "+
+   "left, each gap growing by the number of paces named \u2014 the "+
+   "farther a group stands from the right, the farther it must march.  To "+
+   "CLOSE by the left flank, the left group stands fast and the others "+
+   "close upon it to the left.\n\nThe line marching, the flank cannot "+
+   "conveniently be named, so a group is named instead: 1. By the right "+
+   "(left) group (so many paces). 2. Extend (Close) Intervals. 3. MARCH "+
+   "\u2014 the named group continuing straight forward while the rest "+
+   "incline away from it (to extend) or toward it (to close) as the line "+
+   "advances.",
+   [
+     ["1. By the left flank (N paces). 2. Extend Intervals. 3. MARCH.",
+      "skirm_ext_lf",
+      "At a halt: the right group stands fast; every other group faces "+
+      "to the left and marches, halting when its gap has grown by the "+
+      "number of paces set in the Paces box.  The sergeants, chiefs, "+
+      "escorts and reserve conform to the new front."],
+     ["1. By the right flank (N paces). 2. Extend Intervals. 3. MARCH.",
+      "skirm_ext_rf",
+      "The mirror: the left group stands fast and the others extend to "+
+      "the right."],
+     ["1. By the left flank (N paces). 2. Close Intervals. 3. MARCH.",
+      "skirm_close_lf",
+      "At a halt: the left group stands fast; the others face to the "+
+      "left and close upon it, each gap shrinking by the number of "+
+      "paces set above (the intervals will not close below one pace)."],
+     ["1. By the right flank (N paces). 2. Close Intervals. 3. MARCH.",
+      "skirm_close_rf",
+      "The mirror: the right group stands fast and the others close "+
+      "upon it to the right."],
+     ["1. By the right group (N paces). 2. Extend Intervals. 3. MARCH.",
+      "skirm_ext_gr",
+      "On the march: the right group keeps straight forward; the "+
+      "others incline to the left as they advance until the gaps have "+
+      "grown by the named number of paces."],
+     ["1. By the left group (N paces). 2. Extend Intervals. 3. MARCH.",
+      "skirm_ext_gl",
+      "On the march: the left group keeps straight forward and the "+
+      "others incline to the right to open the gaps."],
+     ["1. By the right group (N paces). 2. Close Intervals. 3. MARCH.",
+      "skirm_close_gr",
+      "On the march: the right group keeps straight forward and the "+
+      "others incline toward it to close the gaps."],
+     ["1. By the left group (N paces). 2. Close Intervals. 3. MARCH.",
+      "skirm_close_gl",
+      "On the march: the left group keeps straight forward and the "+
+      "others incline toward it to close the gaps."]
+   ]],
+  ["Movements of the skirmish line",
+   "The deployed line marches by the same commands as a company in line: "+
+   "1. Forward. 2. MARCH \u2014 1. In retreat. 2. MARCH \u2014 wheels to "+
+   "the right or left \u2014 marches by the right or left flank (the "+
+   "files, being already in single rank, do not double) \u2014 and 1. "+
+   "Skirmishers. 2. HALT.  Throughout every movement the reserve marches "+
+   "so as to keep its position relative to the line, and the escorts and "+
+   "chiefs conform.\n\nSimulation note: each wheel is shown as a swing of "+
+   "45 degrees about the flank man; during the wheel the two sergeants "+
+   "place themselves behind the flanks of the line to mark the new "+
+   "alignment.",
+   [
+     ["1. Forward. 2. MARCH.", "skirm_forward",
+      "The line advances "+MARCH_PACES+" paces, preserving its "+
+      "intervals; the reserve and all the staff conform.  Click again "+
+      "to continue the advance."],
+     ["1. In retreat. 2. MARCH.", "skirm_retreat",
+      "The line faces about and retires "+MARCH_PACES+" paces; the "+
+      "reserve retires with it.  Click again to continue; at the halt "+
+      "the men face to the front again."],
+     ["1. Right wheel. 2. MARCH.", "skirm_wheel_right",
+      "The line wheels 45 degrees to the right about the man on its "+
+      "right flank; the sergeants mark the flanks, and the chiefs, "+
+      "escorts and reserve move to their posts on the new front.  A "+
+      "long swing \u2014 raise Speed for comfort."],
+     ["1. Left wheel. 2. MARCH.", "skirm_wheel_left",
+      "The same wheel to the left, about the man on the left flank."],
+     ["1. By the right flank. 2. MARCH.", "skirm_flankmarch_right",
+      "Every man faces to the right and the line marches by the flank "+
+      ""+MARCH_PACES+" paces \u2014 in single rank, without doubling.  "+
+      "Click again to continue; halt to face the front."],
+     ["1. By the left flank. 2. MARCH.", "skirm_flankmarch_left",
+      "The same march by the left flank."],
+     ["1. Skirmishers. 2. HALT.", "skirm_halt",
+      "The line halts and faces the front.  If it halts while firing "+
+      "on the move, the men align themselves on the man farthest to "+
+      "the front (in advancing) or rearmost (in retiring) and the "+
+      "firing continues at a halt."]
+   ]],
+  ["Article 3: The firings",
+   "The skirmishers fire by file pairs, the front-rank man and rear-rank "+
+   "man of the same file firing alternately so that one of the two is "+
+   "always loaded.\n\nAt a halt: at the command Commence firing, the "+
+   "front-rank man fires and reloads; when he is reloaded he calls "+
+   "'Ready!', upon which his rear-rank man fires, and so on "+
+   "alternately.\n\nAdvancing: the front-rank man halts and fires; his "+
+   "comrade, loaded, advances ten paces beyond him and halts; when the "+
+   "front-rank man has reloaded and calls 'Ready!' the rear-rank man "+
+   "fires, the front-rank man advancing in his turn ten paces beyond "+
+   "him \u2014 the line working forward by alternate rushes.\n\nIn "+
+   "retreat: the man whose turn it is halts, faces the enemy and fires, "+
+   "then falls back reloading as he goes until he is ten paces beyond "+
+   "his comrade, who has halted facing the enemy and waits, loaded, for "+
+   "his own turn.\n\nSimulation note: the smoke of each discharge is "+
+   "shown at the muzzle, and the 'Ready!' of the reloaded men as a "+
+   "small cue above their heads.  'Cease firing' is added here so the "+
+   "loop can be ended; most other commands are locked while the line is "+
+   "firing \u2014 halt, cease firing, or rally first.",
+   [
+     ["1. Commence Firing.", "skirm_fire",
+      "Given to the deployed line halted, advancing, or retreating.  "+
+      "Halted, the ranks fire alternately in place.  Advancing, the "+
+      "line works forward by alternate ten-pace rushes, the loaded "+
+      "rank passing the firing rank.  Retreating, each rank in turn "+
+      "halts facing the enemy, fires, and falls back reloading past "+
+      "its comrades.  The firing continues until Cease firing, a "+
+      "halt, or a rally."],
+     ["1. Cease Firing.", "skirm_cease",
+      "The firing ends; if the line was firing on the move the men "+
+      "align themselves (advancing, on the man farthest forward; "+
+      "retreating, on the rearmost) and stand fast.  (This command is "+
+      "supplied by the simulation to close the firing loop.)"]
+   ]],
+  ["Article 4: The rally",
+   "Threatened by cavalry or in broken ground the skirmishers rally.\n\n"+
+   "RALLY BY FOURS: each group of four forms a small diamond about the "+
+   "spot of its even-numbered front-rank man, with room for one man in "+
+   "the middle: the even front-rank man stands fast facing the front, "+
+   "the even rear-rank man faces to the left, the odd front-rank man to "+
+   "the rear, and the odd rear-rank man to the right.  The sergeants of "+
+   "the line throw themselves into the nearest group, making a group of "+
+   "five; the chiefs of section and the captain rally with their own "+
+   "escorts.  The pairs continue firing if they had been firing.  The "+
+   "command Deploy as skirmishers re-extends the line on the same "+
+   "ground.\n\nRALLY BY SECTION: each chief of section moves to one of "+
+   "his groups, which forms its diamond about him (in the drill the "+
+   "core group raises its rifles as a signal \u2014 not shown); the "+
+   "other groups of the section run to it and form successive rings "+
+   "facing outward, the sergeants and the captain's party joining the "+
+   "nearest mass.  To resume the skirmish line the captain commands "+
+   "Form sections: each section re-forms its two-rank close order at "+
+   "the mass, moves out, and deploys anew at the regulation "+
+   "intervals.\n\nRALLY BY PLATOONS and RALLY ON THE RESERVE are made "+
+   "on the same principles by larger bodies.\n\nSimulation notes: the "+
+   "firing is ceased at the rally by section; 'Form sections' deploys "+
+   "the line afresh from the section masses rather than back onto its "+
+   "old ground.",
+   [
+     ["1. Rally by Fours.", "skirm_rally4",
+      "Each group closes into its diamond \u2014 even front-rank man "+
+      "standing fast facing front, even rear-rank man facing left, odd "+
+      "front-rank man rear, odd rear-rank man right \u2014 with room "+
+      "for a fifth man in the middle, which the sergeants of the line "+
+      "fill in the groups nearest them.  The chiefs and the captain "+
+      "(if forward) close their escorts about themselves.  Firing, if "+
+      "in progress, continues by pairs."],
+     ["1. Deploy as Skirmishers.", "skirm_redeploy",
+      "The groups re-extend from their diamonds into the skirmish "+
+      "line on the same ground, and the sergeants return to their "+
+      "posts ten paces in rear."],
+     ["1. Rally by Section.", "skirm_rallysec",
+      "Each chief of section places himself in the heart of a core "+
+      "group, which forms its diamond about him; the remaining groups "+
+      "of the section run in and form successive rings facing "+
+      "outward, and the sergeants (and the captain's party, if "+
+      "forward) join the nearest mass.  The firing ceases."],
+     ["1. Form Sections.", "skirm_formsec",
+      "Each section re-forms its two-rank close order at its mass, "+
+      "moves out to its front, and the groups deploy anew into a "+
+      "fresh skirmish line at the regulation five-pace spacing, the "+
+      "staff and reserve taking their posts upon it."],
+     ["1. Rally by Platoons.", null,
+      "The deployed platoon rallies in a square upon its centre, the "+
+      "reserve platoon forming a like square.  (Animation planned for "+
+      "a future version.)"],
+     ["1. Rally on the Reserve.", null,
+      "The whole of the skirmishers run in and re-form upon the "+
+      "reserve platoon.  (Animation planned for a future version.)"]
+   ]]
 ]]
 ];
 
@@ -5100,7 +6347,37 @@ const ORDER_DISPATCH = {
   online_left_prep: m => m.odOnLinePrep(false),
   online_right_turn: m => m.odOnLineTurn(),
   online_right_dress: m => m.odOnLineDress(),
-  guides_posts: m => m.odGuidesPosts()
+  guides_posts: m => m.odGuidesPosts(),
+  skirm1_prep: m => m.odSkirmPrep(1),
+  skirm2_prep: m => m.odSkirmPrep(2),
+  skirm_takeint_fwd: m => m.odSkirmTakeIntFwd(),
+  skirm_halt: m => m.odSkirmHalt(),
+  skirm_deploy_march: m => m.odSkirmDeployMarch(),
+  skirm_flank_right: m => m.odSkirmFlankDeploy("right"),
+  skirm_flank_left: m => m.odSkirmFlankDeploy("left"),
+  skirm_flank_center: m => m.odSkirmFlankDeploy("center"),
+  skirm_ext_lf: m => m.odSkirmInterval(true, false, true),
+  skirm_ext_rf: m => m.odSkirmInterval(true, false, false),
+  skirm_close_lf: m => m.odSkirmInterval(false, false, false),
+  skirm_close_rf: m => m.odSkirmInterval(false, false, true),
+  skirm_ext_gr: m => m.odSkirmInterval(true, true, true),
+  skirm_ext_gl: m => m.odSkirmInterval(true, true, false),
+  skirm_close_gr: m => m.odSkirmInterval(false, true, true),
+  skirm_close_gl: m => m.odSkirmInterval(false, true, false),
+  skirm_forward: m => m.odSkirmForward(),
+  skirm_retreat: m => m.odSkirmRetreat(),
+  skirm_wheel_right: m => m.odSkirmWheel(true),
+  skirm_wheel_left: m => m.odSkirmWheel(false),
+  skirm_flankmarch_right: m => m.odSkirmFlankMarch(true),
+  skirm_flankmarch_left: m => m.odSkirmFlankMarch(false),
+  skirm_fire: m => m.odSkirmFireStart(),
+  skirm_cease: m => m.odSkirmCease(),
+  skirm_rally4: m => m.odSkirmRally4(),
+  skirm_redeploy: m => m.odSkirmRedeploy(),
+  skirm_rallysec: m => m.odSkirmRallySec(),
+  skirm_formsec: m => m.odSkirmFormSec(),
+  skirm_capt_escort: m => m.odSkirmCapt(true),
+  skirm_capt_reserve: m => m.odSkirmCapt(false)
 };
 
 const STATE_LABEL = {
@@ -5143,7 +6420,16 @@ const STATE_LABEL = {
   FILE_LINE_LEFT: "Formed on the left by file — captain and left guide posted at the left",
   CMARCH_FACED: "Faced for the countermarch — guides posted and faced about, captain by the first rank",
   CMARCH_COL: "Countermarching by file — the leading four four paces from its rest",
-  CMARCH_HALT: "Halted in the column of fours on its own ground — awaiting FRONT"
+  CMARCH_HALT: "Halted in the column of fours on its own ground — awaiting FRONT",
+  SKIRM_PREP: "Skirmishers told off — the reserve platoon three paces in rear",
+  SKIRM_TAKING: "Taking intervals — the groups of four opening to twenty paces",
+  SKIRM_LINE_HALT: "Deployed as skirmishers, at a halt",
+  SKIRM_ADVANCE: "Skirmish line advancing",
+  SKIRM_RETREAT: "Skirmish line retiring",
+  SKIRM_FLANK_R: "Skirmish line marching by the right flank",
+  SKIRM_FLANK_L: "Skirmish line marching by the left flank",
+  SKIRM_RALLY4: "Rallied by fours — each group in its diamond",
+  SKIRM_RALLYSEC: "Rallied by section — the sections massed"
 };
 
 if(typeof module !== "undefined" && module.exports){
@@ -5191,6 +6477,9 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     form_halt:   ["capt", "1L"]    // each chief halts his platoon on the line
   };
   let dragging = null, dragMoved = false;
+  let puffs = [];         // musketry smoke [{x,y,dx,dy,j,t0}]
+  let cues = [];          // small floating cues [{id,text,t0,dur}]
+  let pendingShots = [];  // scheduled discharges [{id,t}]
 
   function resetView(){
     view = [-(model.nFiles - 1) * FW / 2, 1];
@@ -5318,6 +6607,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     return dot(sub(c1, c2), vec(m.colDir)) > 0;
   }
   const inStates = (...ss) => m => ss.indexOf(m.state) !== -1;
+  const skNoFire = f => m => !(m._sk && m._sk.firing) && f(m);
   const inFlank = inStates("FLANK_FACED", "FLANK_MARCH");
   const inCol   = inStates("COL_HALT", "COL_MARCH");
   const ENABLED_WHEN = {
@@ -5402,10 +6692,48 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     online_left_prep:  m => inCol(m) && colRightInFront(m) === false,
     online_right_turn: inStates("ONLINE_READY"),
     online_right_dress: inStates("ONLINE_HALTED"),
-    guides_posts:      inStates("LINE_WHEELED", "ONLINE_DRESSED")
+    guides_posts:      inStates("LINE_WHEELED", "ONLINE_DRESSED"),
+    skirm1_prep:  m => !(m._sk && m._sk.firing) &&
+                       (m.state === "LINE_HALT" || m.state === "LINE_MARCH"),
+    skirm2_prep:  m => !(m._sk && m._sk.firing) && m.state === "LINE_HALT",
+    skirm_takeint_fwd: m => m.state === "SKIRM_PREP" && m._sk && m._sk.p === 1,
+    skirm_flank_right:  m => m.state === "SKIRM_PREP" && m._sk && m._sk.p === 2,
+    skirm_flank_left:   m => m.state === "SKIRM_PREP" && m._sk && m._sk.p === 2,
+    skirm_flank_center: m => m.state === "SKIRM_PREP" && m._sk && m._sk.p === 2,
+    skirm_halt: inStates("SKIRM_TAKING", "SKIRM_ADVANCE", "SKIRM_RETREAT",
+                         "SKIRM_FLANK_R", "SKIRM_FLANK_L"),
+    skirm_deploy_march: inStates("SKIRM_TAKING"),
+    skirm_capt_escort:  m => m.state === "SKIRM_LINE_HALT" && m._sk &&
+                             !m._sk.firing && m._sk.captWith === "reserve",
+    skirm_capt_reserve: m => m.state === "SKIRM_LINE_HALT" && m._sk &&
+                             !m._sk.firing && m._sk.captWith === "line",
+    skirm_ext_lf:   skNoFire(inStates("SKIRM_LINE_HALT")),
+    skirm_ext_rf:   skNoFire(inStates("SKIRM_LINE_HALT")),
+    skirm_close_lf: skNoFire(inStates("SKIRM_LINE_HALT")),
+    skirm_close_rf: skNoFire(inStates("SKIRM_LINE_HALT")),
+    skirm_ext_gr:   skNoFire(inStates("SKIRM_ADVANCE")),
+    skirm_ext_gl:   skNoFire(inStates("SKIRM_ADVANCE")),
+    skirm_close_gr: skNoFire(inStates("SKIRM_ADVANCE")),
+    skirm_close_gl: skNoFire(inStates("SKIRM_ADVANCE")),
+    skirm_forward:  skNoFire(inStates("SKIRM_LINE_HALT", "SKIRM_ADVANCE")),
+    skirm_retreat:  skNoFire(inStates("SKIRM_LINE_HALT", "SKIRM_RETREAT")),
+    skirm_wheel_right: skNoFire(inStates("SKIRM_LINE_HALT", "SKIRM_ADVANCE")),
+    skirm_wheel_left:  skNoFire(inStates("SKIRM_LINE_HALT", "SKIRM_ADVANCE")),
+    skirm_flankmarch_right:
+      skNoFire(inStates("SKIRM_LINE_HALT", "SKIRM_FLANK_R")),
+    skirm_flankmarch_left:
+      skNoFire(inStates("SKIRM_LINE_HALT", "SKIRM_FLANK_L")),
+    skirm_fire: m => m._sk && m._sk.deployed && !m._sk.firing &&
+      ["SKIRM_LINE_HALT","SKIRM_ADVANCE","SKIRM_RETREAT"]
+        .indexOf(m.state) >= 0,
+    skirm_cease: m => !!(m._sk && m._sk.firing),
+    skirm_rally4:   inStates("SKIRM_LINE_HALT"),
+    skirm_redeploy: inStates("SKIRM_RALLY4"),
+    skirm_rallysec: inStates("SKIRM_LINE_HALT", "SKIRM_RALLY4"),
+    skirm_formsec:  inStates("SKIRM_RALLYSEC")
   };
   function refreshButtons(){
-    const busy = !!anim;
+    const busy = !!anim && !(model._sk && model._sk.firing);
     for(const { key, btn } of BTN_REGISTRY){
       const p = ENABLED_WHEN[key];
       btn.disabled = busy || (p ? !p(model) : false);
@@ -5413,13 +6741,66 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   }
 
   // ---------- orders & animation ----------
+  // Orders that may interrupt the firing loop mid-cycle.
+  const FIRE_INTERRUPT = { skirm_cease: 1, skirm_halt: 1,
+                           skirm_rally4: 1, skirm_rallysec: 1 };
+  // Builds the animation (and consumes the model's scheduled speech, cues
+  // and musket discharges) for whatever paths the model has just laid out.
+  // Used by runOrder and by the self-chaining fire cycles.
+  function launchAnim(withArrows){
+    if(withArrows && !el("inArrows").checked) arrows = [];
+    const moving = model.menArr().filter(m => m.path);
+    if(withArrows) for(const m of moving) arrows.push(m.path.slice());
+    if(moving.length){
+      // men marked "rush" (the reserve's long treks) arrive with the rest
+      // and are left out of the duration, which follows the marching men
+      const lenMen = moving.filter(m => !m.rush);
+      const maxLen = Math.max(...(lenMen.length ? lenMen : moving)
+                                 .map(m => m.length));
+      const speed = parseFloat(el("inSpeed").value);
+      anim = { t0: performance.now(),
+               dur: Math.max(600, maxLen / Math.max(0.5, speed) * 1000),
+               perMan: !!model._perManAnim,
+               maxLen: maxLen };
+      model._perManAnim = false;
+    } else if(model._extraAnimMs){
+      // no man stirs, but the order takes time (e.g. counting twos)
+      anim = { t0: performance.now(), dur: model._extraAnimMs };
+    }
+    model._extraAnimMs = 0;
+    const now = performance.now();
+    // delayed per-man speech scheduled by the model (the count of twos)
+    if(model._extraSpeech){
+      for(const e of model._extraSpeech)
+        speech.push({ id: e.id, text: e.text,
+                      t0: now + (e.delayMs || 0), dur: e.durMs || 1200 });
+      model._extraSpeech = null;
+    }
+    // small floating cues ("Ready!") and scheduled musket discharges
+    if(model._extraCues){
+      for(const e of model._extraCues)
+        cues.push({ id: e.id, text: e.text,
+                    t0: now + (e.delayMs || 0), dur: e.durMs || 900 });
+      model._extraCues = null;
+    }
+    if(model._shots){
+      for(const s of model._shots)
+        pendingShots.push({ id: s.id, t: now + (s.delayMs || 0) });
+      model._shots = null;
+    }
+  }
   function runOrder(title, casey, label, key, note){
     if(isNarrow()) closeDrawers();
+    if(anim && model._sk && model._sk.firing && FIRE_INTERRUPT[key]){
+      // the order breaks into the firing: settle the current cycle first
+      model.finish(); anim = null; pendingShots = [];
+    }
     if(anim){
       showText(title, casey, note,
         "A movement is still in progress — wait for it to finish.");
       return;
     }
+    model.skirmPaces = parseInt(el("inPaces").value, 10) || 5;
     const err = ORDER_DISPATCH[key](model);
     if(err){
       showText(title, casey, note, "ORDER NOT TAKEN: " + err);
@@ -5444,30 +6825,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
         .filter(id => model.men.has(id))
         .map(id => ({ id: id, text: spoken, t0: t0, dur: dur }));
     }
-    if(!el("inArrows").checked) arrows = [];
-    const moving = model.menArr().filter(m => m.path);
-    for(const m of moving) arrows.push(m.path.slice());
-    if(moving.length){
-      const maxLen = Math.max(...moving.map(m => m.length));
-      const speed = parseFloat(el("inSpeed").value);
-      anim = { t0: performance.now(),
-               dur: Math.max(600, maxLen / Math.max(0.5, speed) * 1000),
-               perMan: !!model._perManAnim,
-               maxLen: maxLen };
-      model._perManAnim = false;
-    } else if(model._extraAnimMs){
-      // no man stirs, but the order takes time (e.g. counting twos)
-      anim = { t0: performance.now(), dur: model._extraAnimMs };
-    }
-    model._extraAnimMs = 0;
-    // delayed per-man speech scheduled by the model (the count of twos)
-    if(model._extraSpeech){
-      const now = performance.now();
-      for(const e of model._extraSpeech)
-        speech.push({ id: e.id, text: e.text,
-                      t0: now + (e.delayMs || 0), dur: e.durMs || 1200 });
-      model._extraSpeech = null;
-    }
+    launchAnim(true);
     updateState();
   }
 
@@ -5477,13 +6835,20 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     const hd = ((model.heading * 180/Math.PI) + 90 + 360) % 360;
     const comp = ["N","NE","E","SE","S","SW","W","NW"][
       Math.floor(((hd + 22.5) % 360)/45)];
-    el("stateLbl").textContent = "Formation: " + s + "  |  Front: " + comp;
+    el("stateLbl").textContent = "Formation: " + s +
+      (model._sk && model._sk.firing ? " — FIRING" : "") +
+      "  |  Front: " + comp;
   }
 
   // ---------- drawing ----------
   function draw(){
     const rb = document.getElementById("readyBadge");
-    if(anim){
+    if(anim && model._sk && model._sk.firing){
+      if(rb.textContent !== "FIRING"){
+        rb.textContent = "FIRING";
+        rb.style.background = "#f3d3c4"; rb.style.color = "#8a3a1a";
+      }
+    } else if(anim){
       if(rb.textContent !== "MOVING\u2026"){
         rb.textContent = "MOVING\u2026";
         rb.style.background = "#f6dfae"; rb.style.color = "#7a5a1a";
@@ -5506,7 +6871,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
       const captMult = model._captSpeedMult || 1;
       for(const m of model.men.values()){
         if(!m.path) continue;
-        if(anim.perMan && m.length > 0){
+        if(anim.perMan && m.length > 0 && !m.rush){
           const mult = (m.id === "capt" && captMult !== 1) ? captMult : 1;
           m.pos = m.pointAtFraction(Math.min(1, f * anim.maxLen / m.length * mult));
         } else {
@@ -5514,7 +6879,37 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
           m.pos = m.pointAtFraction(Math.min(1, f * mult));
         }
       }
-      if(f >= 1){ model.finish(); anim = null; updateState(); }
+      if(f >= 1){
+        model.finish(); anim = null;
+        if(model._sk && model._sk.firing &&
+           ["SKIRM_LINE_HALT", "SKIRM_ADVANCE", "SKIRM_RETREAT",
+            "SKIRM_RALLY4"].indexOf(model.state) >= 0){
+          model._skFireCycle();
+          launchAnim(false);
+        }
+        updateState();
+      }
+    }
+
+    // musketry: spawn the discharges that have come due
+    if(pendingShots.length){
+      const nowS = performance.now();
+      for(const s of pendingShots){
+        if(s.t > nowS) continue;
+        const man = model.men.get(s.id);
+        if(man){
+          const fv = vec(man.facing);
+          puffs.push({ x: man.pos[0] + fv[0] * 0.62,
+                       y: man.pos[1] + fv[1] * 0.62,
+                       dx: fv[0], dy: fv[1],
+                       j: Math.random() * 6.283, t0: nowS });
+        }
+      }
+      pendingShots = pendingShots.filter(s => s.t > nowS);
+    }
+    if(puffs.length){
+      const nowP = performance.now();
+      puffs = puffs.filter(p => nowP - p.t0 < 1700);
     }
 
     // follow camera
@@ -5597,6 +6992,40 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
       ctx.fillText(m.label, sx, sy + 0.5);
     }
 
+    // musketry smoke: a flash, then a drifting, fading puff
+    if(puffs.length){
+      const nowD = performance.now();
+      for(const p of puffs){
+        const age = nowD - p.t0, u = age / 1700;
+        const [px, py] = w2s([p.x + p.dx * u * 1.5,
+                              p.y + p.dy * u * 1.5 - u * 0.6]);
+        if(px < -40 || px > w + 40 || py < -40 || py > h + 40) continue;
+        if(age < 140){
+          const fr = (0.30 + 0.5 * age / 140) * P;
+          ctx.strokeStyle = "rgba(246,194,91," + (1 - age / 140) + ")";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for(let k = 0; k < 5; k++){
+            const a = p.j + k * 1.2566;
+            ctx.moveTo(px + Math.cos(a) * fr * 0.35,
+                       py + Math.sin(a) * fr * 0.35);
+            ctx.lineTo(px + Math.cos(a) * fr, py + Math.sin(a) * fr);
+          }
+          ctx.stroke();
+        }
+        for(let k = 0; k < 3; k++){
+          const a = p.j + k * 2.1, rr = (0.26 + u * 1.05) * P *
+            (0.72 + 0.22 * k);
+          const ox = Math.cos(a) * u * 0.5 * P, oy = Math.sin(a) * u * 0.35 * P;
+          ctx.fillStyle = (k === 0 ? "rgba(212,206,192," : "rgba(168,162,150,")
+            + (0.5 * (1 - u)) + ")";
+          ctx.beginPath();
+          ctx.arc(px + ox, py + oy, rr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
     // platoon / section labels: drawn LAST (on top), offset to the outer
     // flanks so the moving circles never obscure them
     if(el("inUnits").checked){
@@ -5627,6 +7056,30 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
         const [sx, sy] = w2s(lp);
         drawPill("sec. " + s, sx, sy, secFont, "#7B6E4E");
       }
+    }
+
+    // small floating cues ("Ready!") above the speakers' heads
+    if(cues.length){
+      const nowC = performance.now();
+      cues = cues.filter(c => nowC - c.t0 < c.dur);
+      const cfs = Math.max(9, Math.min(13, P * 0.5));
+      ctx.font = "italic bold " + cfs + "px Georgia, serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+      for(const c of cues){
+        const man = model.men.get(c.id);
+        if(!man) continue;
+        const age = nowC - c.t0;
+        if(age < 0) continue;
+        const a = age > c.dur - 300 ? Math.max(0, (c.dur - age) / 300) : 1;
+        const [cx2, cy2] = w2s(man.pos);
+        const yy = cy2 - r - 4 - Math.min(6, age / 90);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "rgba(247,243,231," + (0.85 * a) + ")";
+        ctx.strokeText(c.text, cx2, yy);
+        ctx.fillStyle = "rgba(122,60,20," + a + ")";
+        ctx.fillText(c.text, cx2, yy);
+      }
+      ctx.textBaseline = "middle";
     }
 
     // speech bubbles: drawn on top of everything, following the speaker
@@ -5811,6 +7264,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   el("inZoom").addEventListener("input", e => { zoom = parseFloat(e.target.value); });
   function rebuild(){
     anim = null; arrows = []; selId = null; speech = [];
+    puffs = []; cues = []; pendingShots = [];
     model.build(parseInt(el("inFiles").value) || 20,
                 el("inCpl8").checked, el("in3Lt").checked);
     resetView(); updateState();
