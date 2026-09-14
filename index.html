@@ -164,6 +164,10 @@
       <span><span class="sw" style="background:#8FD693"></span>Corporal</span>
       <span><span class="sw" style="background:#7FB3E8"></span>Private</span>
       <span>ring: <b style="color:#16406e">blue</b>=1st plt, <b style="color:#7a1f1b">red</b>=2d plt · tick=facing</span>
+      <span id="legPiece">piece: <b style="color:#4E7A3C">loaded</b> ·
+        <b style="color:#2E6FA8">ready</b> · <b style="color:#C2571E">aim</b> ·
+        <b style="color:#8F8878">fired</b> ·
+        <b style="color:#B4863A">loading arc</b></span>
     </div>
   </div>
   <aside id="panel">
@@ -192,6 +196,11 @@ const MARCH_PACES = 12;
 // chiefs, the reserve's distance, and the leap-frog bound of the firings
 const SK_SP = 5, SK_GAP0 = 5, SK_NCO = 10, SK_CHIEF = 25, SK_RES = 180,
       SK_LEAP = 10;
+// Lesson II: the rear-rank man carries his right foot about eight inches to
+// the right in aiming, so his piece passes clear of his file leader (School
+// of the Soldier, No. 176), and brings it back at the load (No. 179).  Eight
+// inches of the twenty-eight-inch pace.
+const AIM_STEP = 8 / 28;
 
 function vec(h){ return [Math.cos(h), Math.sin(h)]; }
 function add(p, v, k){ return [p[0] + v[0]*k, p[1] + v[1]*k]; }
@@ -229,6 +238,9 @@ class Man{
     this.path = null; this.cum = null; this.length = 0; this.timed = false;
     this.fileI = null;
     this.rush = false;   // finish with the animation regardless of length
+    // Lesson II: the piece.  `loaded` is the charge in the barrel; `piece`
+    // is the attitude -- shoulder / ready / aim / fired / charge / ram / prime.
+    this.piece = "shoulder"; this.loaded = true; this._aimShift = null;
     // facing to assume when the current movement completes (or null)
     this.endFacing = null;
   }
@@ -300,6 +312,9 @@ class CompanyModel{
     this._cpl8 = corporals8; this._onFinish = null;
     this._extraSpeech = null; this._extraAnimMs = 0;
     this._sk = null; this.skirmPaces = 5;
+    // Lesson II: the firings and the loading drill
+    this._fire = null; this._rearFaced = false;
+    this._pieceCues = null;
     const sectionOf = i => i < s1 ? 1 : i < n1 ? 2 : i < n1 + s3 ? 3 : 4;
     const fx = i => -i * FW;
     const put = (m, x, y) => { m.pos = [x, y]; this.men.set(m.id, m); this.order.push(m.id); };
@@ -372,7 +387,10 @@ class CompanyModel{
       "Fifth Sergeant — file closer opposite the second file from the right of "+
       "the 1st platoon (Title First, par. 22)."), fx(1), CLOSERD);
 
-    for(const m of this.men.values()){ m.facing = UP; m.path = null; }
+    for(const m of this.men.values()){
+      m.facing = UP; m.path = null;
+      m.piece = "shoulder"; m.loaded = true; m._aimShift = null;
+    }
   }
 
   F(){ return vec(this.heading); }
@@ -407,6 +425,14 @@ class CompanyModel{
       if(m.path){ m.pos = m.path[m.path.length-1]; m.path = null; }
       if(m.endFacing != null){ m.facing = m.endFacing; m.endFacing = null; }
       m.rush = false;
+    }
+    // Any change of attitude still owed at the end of the movement (Lesson
+    // II).  The GUI consumes these as their time comes due; whatever it has
+    // not taken -- or everything, when nothing is drawing -- lands here, so
+    // the model is always consistent when a movement ends.
+    if(this._pieceCues){
+      for(const c of this._pieceCues) this._applyPiece(c);
+      this._pieceCues = null;
     }
     this._captSpeedMult = 1;
     if(this._onFinish){ const f = this._onFinish; this._onFinish = null; f(); }
@@ -3480,6 +3506,603 @@ class CompanyModel{
     this.state = "COL_MARCH"; return null;
   }
 
+  // ================= LESSON II: THE LOADINGS AND THE FIRINGS ===============
+  // Casey, School of the Company, Lesson Second (42-83), resting throughout
+  // on the School of the Soldier: loading in four times (S.S. 249-254) and
+  // at will (256-258); the direct and oblique fire (259-272); the fire by
+  // file (273-282); the fire by rank (283-289).
+  //
+  // Every man carries a piece.  `loaded` says whether there is a charge in
+  // the barrel; `piece` is his attitude --
+  //    "shoulder"  shouldered arms
+  //    "ready"     at a ready, cocked                        (S.S. 172-173)
+  //    "aim"       aiming                                    (S.S. 174-176)
+  //    "fired"     discharged, not yet reloaded
+  //    "charge" / "ram" / "prime"   the three loading times   (S.S. 251-253)
+  //
+  // In aiming, the rear-rank man carries his right foot about eight inches
+  // to the right, toward the left heel of the man next on his right, so that
+  // his piece passes clear of his file leader (S.S. 176); at the load he
+  // brings it back beside the other (S.S. 179).  That is AIM_STEP.  In the
+  // oblique fire he advances a foot toward the side of the oblique instead
+  // (S.S. 269, 271), and both ranks throw back a shoulder (S.S. 268, 270).
+  //
+  // Bookkeeping lives in this._fire:
+  //   mode      "company" | "file" | "rank"
+  //   step      where the beat stands: "post" | "ready" | "aim" | "fire" |
+  //             "load" | "run" | "rank"
+  //   turn      in the fire by rank, the rank that fires next
+  //   rearKind  which nominal rank stands in rear on the ground
+  //   oblique   null | "right" | "left"                          (54, 62)
+  //   running   the firing continues of itself till 'cease firing'  (53, 63)
+  //   capt0 / sg0   the posts the captain and covering sergeant quitted (49)
+  //
+  // Simplification: the bugle signals of 63-66 are represented by the
+  // commands 'cease firing' and 'POSTS', exactly as Casey directs for drill
+  // without powder (65-66); misfires, the ball screw and the inspection of
+  // arms (82-83) are matter for the instructor, not for the ground.
+
+  // A firing goes on of itself until the signal to cease.  When a movement
+  // ends, the GUI asks the model whether anything is still firing: if so the
+  // next beat is laid out here and the animation continues without a fresh
+  // order.  Both the skirmish firings (Art. 3 of the skirmisher drill) and
+  // the company firings of Lesson II chain through this one door.
+  _chainNext(){
+    if(this._sk && this._sk.firing &&
+       ["SKIRM_LINE_HALT", "SKIRM_ADVANCE", "SKIRM_RETREAT", "SKIRM_RALLY4"]
+         .indexOf(this.state) >= 0){
+      this._skFireCycle();
+      return true;
+    }
+    if(this._fire && this._fire.running && !this._fire.await &&
+       this.state === "FIRING")
+      return this._fireCycle();
+    return false;
+  }
+
+  _baseState(){ return this._rearFaced ? "REAR_FACED" : "LINE_HALT"; }
+  // Every man who carries a musket: the rank and file, which is to say the
+  // privates and the corporals.  The captain, the covering sergeant and the
+  // file closers direct the firing; they do not fire in it.
+  _armed(){
+    return this.menArr().filter(m =>
+      (m.rank === "front" || m.rank === "rear") &&
+      (m.role === "private" || m.role === "corporal"));
+  }
+  _armedOf(kind){ return this._armed().filter(m => m.rank === kind); }
+  // Which nominal rank stands in rear as the ground has it.  When the
+  // company is faced by the rear rank this returns "front" -- which is
+  // precisely Casey's "the front rank, now become the rear" (72), so the
+  // fire by rank begins with the right rank without any special case.
+  _rearRankKind(){
+    const F = this.F();
+    const a = this._armedOf("front"), b = this._armedOf("rear");
+    if(!a.length || !b.length) return "rear";
+    return dot(centroid(a.map(m => m.pos)), F) <
+           dot(centroid(b.map(m => m.pos)), F) ? "front" : "rear";
+  }
+  // The files, ordered from the right of the company AS IT NOW STANDS, each
+  // as [frontRankMan, rearRankMan].  Faced by the rear rank this counts from
+  // the old left -- "now become the right" (72).
+  _filesFromRight(){
+    const R = vec(this.heading + Math.PI/2);
+    const rearKind = this._rearRankKind();
+    const frontKind = rearKind === "front" ? "rear" : "front";
+    const fs = this._armedOf(frontKind).slice()
+      .sort((a, b) => dot(b.pos, R) - dot(a.pos, R));
+    const rs = this._armedOf(rearKind);
+    return fs.map(f => {
+      let best = null, bd = Infinity;
+      for(const r of rs){
+        const d = Math.abs(dot(sub(r.pos, f.pos), R));
+        if(d < bd){ bd = d; best = r; }
+      }
+      return best && bd < 0.6 ? [f, best] : [f];
+    });
+  }
+
+  // ---- the piece: attitude and charge -------------------------------------
+  _applyPiece(c){
+    const m = this.men.get(c.id);
+    if(!m) return;
+    if(c.piece) m.piece = c.piece;
+    if(c.loaded !== undefined && c.loaded !== null) m.loaded = c.loaded;
+    if(c.facing !== undefined && c.facing !== null){
+      m.facing = c.facing; m.endFacing = c.facing;
+    }
+  }
+  // Change a man's attitude, now or after a delay.  Delayed changes are
+  // handed to the GUI, which applies them as their time comes due; finish()
+  // flushes whatever is left, so the model is always consistent at the end
+  // of a movement whether or not anything is drawing it.
+  _setPiece(m, piece, loaded, delayMs, facing){
+    const c = { id: m.id, piece: piece, loaded: loaded, facing: facing,
+                delayMs: delayMs || 0 };
+    if(!c.delayMs){ this._applyPiece(c); return; }
+    (this._pieceCues = this._pieceCues || []).push(c);
+  }
+  // The rear-rank man's eight inches (S.S. 176/179, 269, 271).
+  _aimVec(){
+    const f = this._fire;
+    const obl = !f || !f.oblique ? 0
+              : f.oblique === "right" ? Math.PI/4 : -Math.PI/4;
+    return vec(this.heading + Math.PI/2 + obl);
+  }
+  _aimStep(m, on){
+    const f = this._fire;
+    if(!f) return;
+    if(on){
+      if(m._aimShift || m.rank !== f.rearKind) return;
+      const v = this._aimVec();
+      m._aimShift = [v[0]*AIM_STEP, v[1]*AIM_STEP];
+      m.setPath([add(m.pos, m._aimShift, 1)]);
+    } else {
+      if(!m._aimShift) return;
+      m.setPath([add(m.pos, m._aimShift, -1)]);
+      m._aimShift = null;
+    }
+  }
+  _aimFacing(){
+    const f = this._fire;
+    return this.heading + (!f || !f.oblique ? 0
+      : f.oblique === "right" ? Math.PI/4 : -Math.PI/4);
+  }
+
+  // ---- Article First: to load in four times, and at will (44-47) ----------
+  // S.S. 250-254: the first time at the end of the command LOAD, the three
+  // others at TWO, THREE and FOUR -- to include charge cartridge, to include
+  // ram cartridge, to include prime, and the time of shoulder arms.
+  _loadOK(what){
+    if(this.state === "FIRING" || this.state === "FIRE_CEASED")
+      return "The loading drill is not given while the firing is going on.";
+    if(this.state !== this._baseState())
+      return "'" + what + "' is given with the company halted in line of " +
+             "battle, the ranks closed (or faced by the rear rank).";
+    return null;
+  }
+  // The whole exercise at one order: the first time at the end of the
+  // command LOAD, the three others at TWO, THREE and FOUR, which the
+  // instructor gives in their turn -- the company resting on each time, so
+  // that the four are plainly distinguished (S.S. 249-250).  The men of a
+  // rank execute a time together, with only the unevenness of a real rank
+  // between them.
+  odLoadFour(){
+    const e = this._loadOK("Load in four times -- LOAD"); if(e) return e;
+    this.clearPaths();
+    const BEAT = 1150;                    // the pause between the times
+    const times = [["charge", false], ["ram", false],
+                   ["prime", true], ["shoulder", true]];
+    for(const m of this._armed()){
+      const jitter = Math.random() * 260;
+      times.forEach(([piece, loaded], i) =>
+        this._setPiece(m, piece, loaded, 120 + i * BEAT + jitter));
+      m.facing = this.heading; m.endFacing = this.heading;
+    }
+    // 45: in priming, the captain and the covering sergeant half face to the
+    // right with the men, and face to the front again as the man next them
+    // brings his piece to the shoulder.
+    for(const id of ["capt", "1S"]){
+      const m = this.men.get(id); if(!m) continue;
+      this._setPiece(m, null, null, 120 + 2 * BEAT, this.heading + Math.PI/4);
+      this._setPiece(m, null, null, 120 + 3 * BEAT + 240, this.heading);
+      m.endFacing = this.heading;
+    }
+    // the instructor's TWO, THREE and FOUR, in their turn
+    this._extraCues = ["TWO", "THREE", "FOUR"].map((t, i) => ({
+      id: "capt", text: t, delayMs: 120 + (i + 1) * BEAT - 160, durMs: 850
+    }));
+    this._extraAnimMs = 120 + 4 * BEAT;
+    return null;
+  }
+  // 256: loading at will is loading in four times, but continued, and
+  // without resting on either of the times; 257: each man without
+  // regulating himself by his neighbor, and above all without waiting.
+  odLoadAtWill(){
+    const e = this._loadOK("Load at will -- LOAD"); if(e) return e;
+    this.clearPaths();
+    let last = 0;
+    for(const m of this._armed()){
+      const d = 80 + Math.random() * 520;
+      this._setPiece(m, "charge",   false, d);
+      this._setPiece(m, "ram",      false, d + 360 + Math.random() * 200);
+      this._setPiece(m, "prime",    true,  d + 780 + Math.random() * 240);
+      this._setPiece(m, "shoulder", true,  d + 1120 + Math.random() * 280);
+      last = Math.max(last, d + 1400);
+      m.facing = this.heading; m.endFacing = this.heading;
+    }
+    this._extraAnimMs = last + 300;
+    return null;
+  }
+
+  // ---- the common opening of the three firings ----------------------------
+  _fireStart(mode, label){
+    if(this.state === "FIRING") return "The company is already firing.";
+    if(this.state === "FIRE_CEASED")
+      return "The captain and the covering sergeant are still out of the " +
+             "ranks -- give 'POSTS' first (66).";
+    if(this.state !== this._baseState())
+      return "'" + label + "' is given with the company halted in line of " +
+             "battle, the ranks closed (or faced by the rear rank, Art. 5).";
+    this.clearPaths();
+    const rearKind = this._rearRankKind();
+    this._fire = { mode: mode, step: "post", turn: rearKind, round: 0,
+                   rearKind: rearKind, oblique: null, running: true,
+                   await: false, capt0: null, sg0: null };
+    this.state = "FIRING";
+    this._fireCycle();
+    return null;
+  }
+  odFireCompany(){ return this._fireStart("company", "Fire by company"); }
+  odFireByFile(){  return this._fireStart("file",    "Fire by file"); }
+  odFireByRank(){  return this._fireStart("rank",    "Fire by rank"); }
+
+  // 49: the captain places himself opposite the centre of his company and
+  // four paces in rear of the line of file closers; the covering sergeant
+  // retires to that line, opposite to his own interval.
+  _firePost(){
+    const f = this._fire, F = this.F(), R = vec(this.heading + Math.PI/2);
+    const capt = this.men.get("capt"), sg = this.men.get("1S");
+    f.capt0 = capt.pos.slice(); f.sg0 = sg.pos.slice();
+    const frontKind = f.rearKind === "front" ? "rear" : "front";
+    const fr = this._armedOf(frontKind);
+    const c = centroid(fr.map(m => m.pos));
+    const depthOf = p => dot(p, F);
+    let deep = CLOSERD;
+    for(const m of this.menArr())
+      if(m.rank === "closer")
+        deep = Math.max(deep, depthOf(c) - depthOf(m.pos));
+    capt.setPath([add(c, F, -(deep + 4))]);
+    capt.endFacing = this.heading + Math.PI;      // he watches his company
+    const lat = dot(f.capt0, R), dep = depthOf(c) - CLOSERD;
+    sg.setPath([[F[0]*dep + R[0]*lat, F[1]*dep + R[1]*lat]]);
+    sg.endFacing = this.heading;
+  }
+
+  // One beat of a firing: lays out whatever the next command of the article
+  // requires and returns true, or false when the firing is over.  The GUI
+  // chains these of itself, so the company goes on firing until the signal.
+  _fireCycle(){
+    const f = this._fire;
+    if(!f || !f.running) return false;
+    this.clearPaths();
+    this._shots = []; this._extraCues = [];
+    if(f.step === "post"){
+      this._firePost();
+      f.step = "ready";
+      this._extraAnimMs = 1100;
+      return true;
+    }
+    if(f.step === "ready"){
+      // S.S. 261/275/285: at READY the two ranks take the position of ready
+      for(const m of this._armed()){
+        this._setPiece(m, "ready", m.loaded, 40 + Math.random() * 260);
+        m.facing = this.heading; m.endFacing = this.heading;
+      }
+      f.step = f.mode === "company" ? "aim" : f.mode === "file" ? "run" : "rank";
+      this._extraAnimMs = 1000;
+      return true;
+    }
+    if(f.mode === "company") return this._fireCoBeat();
+    if(f.mode === "file")    return this._fireFileBeat();
+    return this._fireRankBeat();
+  }
+
+  // Article Second, the fire by company (48-54): the captain's
+  // 1. Company. 2. READY. 3. AIM. 4. FIRE. 5. LOAD -- and then, at 52,
+  // 1. Company. 2. AIM. 3. FIRE. 4. LOAD, over and over till the signal.
+  _fireCoBeat(){
+    const f = this._fire, armed = this._armed();
+    if(f.step === "aim"){
+      const fac = this._aimFacing();
+      for(const m of armed){
+        this._setPiece(m, "aim", m.loaded, 0);
+        this._aimStep(m, true);
+        m.facing = fac; m.endFacing = fac;
+      }
+      f.step = "fire";
+      this._extraAnimMs = 950;
+      return true;
+    }
+    if(f.step === "fire"){
+      for(const m of armed){
+        if(m.loaded) this._shots.push({ id: m.id, delayMs: Math.random() * 240 });
+        this._setPiece(m, "fired", false, 0);
+      }
+      f.step = "load";
+      this._extraAnimMs = 1200;
+      return true;
+    }
+    // 51: at the command load the men load, and then take the position of
+    // ready -- so the volley repeats from the aim (52).
+    for(const m of armed){
+      const d = 120 + Math.random() * 420;
+      this._setPiece(m, "charge", false, d);
+      this._setPiece(m, "ram",    false, d + 400);
+      this._setPiece(m, "prime",  true,  d + 800);
+      this._setPiece(m, "ready",  true,  d + 1120);
+      this._aimStep(m, false);
+      m.facing = this.heading; m.endFacing = this.heading;
+    }
+    f.step = "aim"; f.round++;
+    this._extraAnimMs = 2000;
+    return true;
+  }
+
+  // Article Third, the fire by file (55-57, S.S. 273-282): the fire begins
+  // with the right file; the next file takes aim at the instant the first
+  // brings down pieces to re-load, and so on to the left -- but only in the
+  // first discharge, after which each man loads and fires without
+  // regulating himself by others (57, S.S. 279-280).
+  _fireFileBeat(){
+    const f = this._fire;
+    const files = this._filesFromRight();
+    const first = f.round === 0;
+    const plan = [];
+    let last = 0;
+    files.forEach((pair, k) => {
+      const base = first ? k * 380 : Math.random() * 1100;
+      for(const m of pair){
+        // after the first discharge the two men of a file need no longer
+        // fire together (S.S. 279)
+        const t = base + (first ? 0 : Math.random() * 220);
+        plan.push([m, t]);
+        last = Math.max(last, t + 1560);
+      }
+    });
+    const T = last + 400;
+    const fac = this._aimFacing();
+    for(const [m, t] of plan){
+      this._setPiece(m, "aim",    m.loaded, t);
+      if(m.loaded) this._shots.push({ id: m.id, delayMs: t + 330 });
+      this._setPiece(m, "fired",  false, t + 330);
+      this._setPiece(m, "charge", false, t + 540);
+      this._setPiece(m, "ram",    false, t + 900);
+      this._setPiece(m, "prime",  true,  t + 1260);
+      this._setPiece(m, "ready",  true,  t + 1520);
+      if(m.rank === f.rearKind){
+        const v = this._aimVec();
+        const out = add(m.pos, v, AIM_STEP), home = m.pos.slice();
+        this._phased(m, [[t/T, (t + 140)/T, out],
+                         [(t + 540)/T, (t + 680)/T, home]]);
+      }
+      m.facing = this.heading; m.endFacing = this.heading;
+      if(f.oblique) m.facing = fac;
+    }
+    f.round++;
+    this._extraAnimMs = T;
+    return true;
+  }
+
+  // Article Fourth, the fire by rank (58-62, S.S. 283-289): each entire rank
+  // fires alternately; when one or two pieces of the rank that has fired are
+  // seen again at a ready, the other rank is ordered to aim (60).
+  //
+  // Unlike the fire by company and the fire by file, this one does NOT run on
+  // of itself: Casey has the instructor name the rank for every volley, so
+  // each rank's fire waits on its own order (58, then 60, then "thus by
+  // alternate ranks" -- 61).  `f.await` holds the chain while he speaks.
+  //
+  // The commands name the ranks as the company THEN stands, so when it is
+  // faced by the rear rank the physically rear rank is the one the captain
+  // calls the rear rank -- which is why 72 has to explain the firing
+  // "will commence with the front rank, now become the rear."
+  _rankNominal(physical){
+    const f = this._fire;
+    const rk = f ? f.rearKind : "rear";
+    return physical === "rear" ? rk : (rk === "front" ? "rear" : "front");
+  }
+  _rankPhysical(nominal){
+    const f = this._fire;
+    return (f && nominal === f.rearKind) ? "rear" : "front";
+  }
+  // 60-61: the captain names the rank that is to fire next.
+  odFireRankVolley(physical){
+    const f = this._fire;
+    const name = physical === "rear" ? "Rear" : "Front";
+    if(this.state !== "FIRING" || !f || f.mode !== "rank")
+      return "'" + name + " rank -- AIM -- FIRE -- LOAD' is given in the " +
+             "fire by rank (60), the company being already at a ready.";
+    if(f.step !== "rank")
+      return "The company has not yet come to a ready.";
+    const want = this._rankNominal(physical);
+    if(f.turn !== want)
+      return "The " + this._rankPhysical(f.turn) + " rank has the next " +
+             "fire -- the firing is continued by alternate ranks (61).";
+    f.await = false;
+    this._fireCycle();
+    return null;
+  }
+  _fireRankBeat(){
+    const f = this._fire;
+    const kind = f.turn;
+    const men = this._armedOf(kind);
+    const T = 2500, fac = this._aimFacing();
+    for(const m of men){
+      this._setPiece(m, "aim", m.loaded, 0);
+      if(m.loaded) this._shots.push({ id: m.id, delayMs: 620 + Math.random() * 240 });
+      this._setPiece(m, "fired",  false, 880);
+      this._setPiece(m, "charge", false, 1080);
+      this._setPiece(m, "ram",    false, 1460);
+      this._setPiece(m, "prime",  true,  1840);
+      this._setPiece(m, "ready",  true,  2120);
+      m.facing = fac; m.endFacing = this.heading;
+      if(m.rank === f.rearKind){
+        const v = this._aimVec();
+        const out = add(m.pos, v, AIM_STEP), home = m.pos.slice();
+        this._phased(m, [[0, 0.06, out], [1080/T, 1180/T, home]]);
+      }
+    }
+    // 60: the instructor sees the pieces come again to a ready, and orders
+    // the other rank to aim
+    for(const m of this._armedOf(kind === "front" ? "rear" : "front"))
+      if(Math.random() < 0.16)
+        this._extraCues.push({ id: m.id, text: "Ready!",
+                               delayMs: 2050 + Math.random() * 300,
+                               durMs: 800 });
+    f.turn = kind === "front" ? "rear" : "front";
+    f.round++;
+    f.await = true;          // the next volley waits on the captain's order
+    this._extraAnimMs = T;
+    return true;
+  }
+
+  // 54 / 62: the captain causes aim to be taken to the right and left,
+  // pronouncing 'right (or left) oblique' before the command aim.
+  odFireOblique(side){
+    const f = this._fire;
+    if(!f || !f.running)
+      return "The oblique aim is directed while the company is firing (54).";
+    if(f.mode === "file")
+      return "Casey directs the oblique aim in the fire by company (54) and " +
+             "by rank (62); in the fire by file each man aims at his own " +
+             "object (67).";
+    if(f.oblique === side)
+      return side ? "The aim is already taken to the " + side + "."
+                  : "The aim is already direct.";
+    f.oblique = side;
+    this._extraAnimMs = 700;
+    return null;
+  }
+
+  // 63-66: at the signal (in drill, the command) to cease firing, the men
+  // cease; S.S. 282 -- they that have fired load their pieces and bring them
+  // to a shoulder; they at a ready half-cock and shoulder; they at an aim
+  // bring down their pieces, half-cock, and shoulder.
+  odFireCease(){
+    const f = this._fire;
+    if(!f || !f.running) return "The company is not firing.";
+    this.clearPaths();
+    f.running = false;
+    let last = 0;
+    for(const m of this._armed()){
+      this._aimStep(m, false);
+      const d = 180 + Math.random() * 520;
+      if(!m.loaded){
+        this._setPiece(m, "charge", false, d);
+        this._setPiece(m, "ram",    false, d + 380);
+        this._setPiece(m, "prime",  true,  d + 740);
+      }
+      this._setPiece(m, "shoulder", true, d + 980);
+      last = Math.max(last, d + 1200);
+      m.facing = this.heading; m.endFacing = this.heading;
+    }
+    this._extraAnimMs = last;
+    this.state = "FIRE_CEASED";
+    return null;
+  }
+  // 64/66: the captain and the covering sergeant promptly resume their
+  // places in line, and the alignment of the ranks is rectified.
+  odFirePosts(){
+    if(this.state !== "FIRE_CEASED" || !this._fire)
+      return "'POSTS' follows the signal to cease firing (64, 66).";
+    this.clearPaths();
+    const f = this._fire;
+    if(f.capt0) this.men.get("capt").setPath([f.capt0]);
+    if(f.sg0)   this.men.get("1S").setPath([f.sg0]);
+    this.faceAll(this.heading);
+    this._fire = null;
+    this.state = this._baseState();
+    return null;
+  }
+
+  // ---- Article Fifth: to fire by the rear rank (68-76) --------------------
+  // 69: at 'Face by the rear rank' the captain steps out and places himself
+  // near to, and facing, the right file of his company; the covering
+  // sergeant and the file closers pass quickly through the captain's
+  // interval and place themselves faced to the rear -- the sergeant a pace
+  // behind the captain, the file closers two paces from the front rank,
+  // opposite to their places in line, each passing behind the sergeant.
+  // 70: at ABOUT-FACE the company faces about; the captain places himself in
+  // his interval in the rear rank, now become the front, and the covering
+  // sergeant covers him in the front rank, now become the rear.
+  //
+  // The company is thus inverted for the time: Casey says so himself at 72,
+  // where the fire by file commences "on the left of the company, now become
+  // the right."  The app therefore does nothing to correct it; 73-75 restore
+  // the proper front.
+  odFireRearFace(toRear){
+    if(toRear){
+      if(this.state !== "LINE_HALT")
+        return "'Face by the rear rank' is given with the company halted in " +
+               "line of battle, the ranks closed (68).";
+    } else {
+      if(this.state !== "REAR_FACED")
+        return "'Face by the front rank' is given with the company faced by " +
+               "the rear rank (73).";
+    }
+    this.clearPaths();
+    const H = this.heading, F = vec(H), B = vec(H + Math.PI);
+    const R = vec(H + Math.PI/2), L = vec(H - Math.PI/2);
+    const H2 = H + Math.PI;
+    const capt = this.men.get("capt"), sg = this.men.get("1S");
+    const fronts = this._armedOf(this._rearRankKind() === "front"
+                                 ? "rear" : "front");
+    // the flank of the front rank on the captain's side, and the depth of
+    // the two ranks as they now stand
+    let flank = fronts[0];
+    for(const m of fronts)
+      if(dot(m.pos, R) > dot(flank.pos, R)) flank = m;
+    const frontDep = dot(flank.pos, F);
+    const captInterval = add(flank.pos, R, FW);     // the captain's own place
+    // 69: the captain steps out beyond the flank, facing the right file
+    const captOut = add(captInterval, R, 1.6);
+    capt.facing = H - Math.PI/2;                    // facing the right file
+    // the covering sergeant passes through the interval, a pace behind him
+    const sgWp = add(captInterval, B, 0.6);
+    const sgOut = add(captOut, F, 1.2);
+    sg.facing = H;
+    // the file closers pass behind the sergeant, through the interval, and
+    // take post two paces in front of the front rank, opposite their places
+    const closers = this.menArr().filter(m => m.rank === "closer");
+    closers.forEach((m, i) => {
+      const lat = dot(m.pos, R);
+      const post = [F[0]*(frontDep + 2) + R[0]*lat,
+                    F[1]*(frontDep + 2) + R[1]*lat];
+      const wp1 = add(add(captOut, R, 0.9), B, 1.0);
+      const wp2 = add(post, R, dot(captOut, R) - lat);
+      const t0 = 0.1 + 0.035 * i;
+      this._phased(m, [[t0, t0 + 0.2, wp1],
+                       [t0 + 0.2, t0 + 0.34, wp2],
+                       [0.56, 0.8, post]]);
+      m.endFacing = H2;
+    });
+    // 70: facing by the rear rank, the captain takes HIS INTERVAL -- the
+    // place he has just quitted -- in the rank that has become the front,
+    // and the covering sergeant covers him in the other. That leaves the
+    // company inverted, as Casey says plainly at 72.
+    // 75: facing by the front rank again, the two simply "resume their
+    // places in line" -- the captain on the right of the front rank as the
+    // company will then stand, the sergeant covering him.
+    let captNew, sgNew;
+    if(toRear){
+      const rearMen = this._armedOf(this._rearRankKind());
+      let rFlank = rearMen[0];
+      for(const m of rearMen)
+        if(dot(m.pos, R) > dot(rFlank.pos, R)) rFlank = m;
+      captNew = add(rFlank.pos, R, FW);
+      sgNew = add(captNew, F, RANKD);
+    } else {
+      const R2 = vec(H2 + Math.PI/2), F2 = vec(H2);
+      const ff = this._armedOf("front");
+      let nFlank = ff[0];
+      for(const m of ff)
+        if(dot(m.pos, R2) > dot(nFlank.pos, R2)) nFlank = m;
+      captNew = add(nFlank.pos, R2, FW);
+      sgNew = add(captNew, F2, -RANKD);
+    }
+    this._phased(capt, [[0, 0.26, captOut], [0.66, 0.92, captNew]]);
+    this._phased(sg, [[0.06, 0.2, sgWp], [0.2, 0.4, sgOut],
+                      [0.68, 0.94, sgNew]]);
+    capt.endFacing = H2; sg.endFacing = H2;
+    for(const m of this._armed()){ m.endFacing = H2; m._aimShift = null; }
+    // keep the heading from drifting away over repeated about-faces
+    const H2n = Math.atan2(Math.sin(H2), Math.cos(H2));
+    this.heading = H2n; this.colDir = H2n;
+    this._rearFaced = !!toRear;
+    this.state = this._baseState();
+    return null;
+  }
+
   // ================= INSTRUCTIONS FOR SKIRMISHERS (after Washburn) =========
   // The company deployed as skirmishers divides into its two platoons: one
   // deployed, the other held in reserve.  The deployed platoon divides into
@@ -4445,6 +5068,11 @@ class CompanyModel{
     this._sections = null; this._flankHybrid = false; this._cm = null;
     this._onFinish = null; this._extraSpeech = null; this._extraAnimMs = 0;
     this._sk = null;
+    this._fire = null; this._rearFaced = false;
+    this._pieceCues = null;
+    for(const m of this.men.values()){
+      m.piece = "shoulder"; m.loaded = true; m._aimShift = null;
+    }
     this.heading = UP; this.colDir = UP;
     const nP = this.nPrivates;
     // a loose crowd centred on the ground where the rank will form
@@ -4920,21 +5548,288 @@ const BOOK = [
 ]],
 ["LESSON II", [
   ["Article 1: To load in four times and at will",
-   "The firing lessons exercise the handling of the piece: loading in four "+
-   "times, and loading at will.  (No movement to animate.)", []],
+   "42. The instructor, wishing to pass to the second lesson, will cause the "+
+   "company to take arms, if stacks have been formed, and command:\n\n"+
+   "1. Attention. 2. Company. 3. Shoulder--ARMS.\n\n"+
+   "43. The instructor will then cause loadings and firings to be executed "+
+   "in the following order.\n\n"+
+   "44. Loading in four times will be commanded and executed as prescribed "+
+   "in the school of the soldier, No. 251, and following. The instructor "+
+   "will cause this exercise to be often repeated, in succession, before "+
+   "passing to load at will.\n\n"+
+   "45. Loading at will will be commanded and executed as prescribed in the "+
+   "school of the soldier, No. 256. In priming when loading in four times, "+
+   "and also at will, the captain and covering sergeant will half face to "+
+   "the right with the men, and face to the front when the man next to them, "+
+   "respectively, brings his piece to the shoulder.\n\n"+
+   "46. The instructor will labor to the utmost to cause the men, in the "+
+   "different loadings, to execute what has been prescribed in the school of "+
+   "the soldier, Nos. 257 and 258.\n\n"+
+   "47. Loading at will, being that of battle, and consequently the one with "+
+   "which it is most important to render the men familiar, it will claim "+
+   "preference in the exercises the moment the men be well established in "+
+   "the principles.\n\n"+
+   "THE FOUR TIMES (School of the Soldier, Nos. 249-254).  The first time is "+
+   "executed at the end of the command LOAD, the three others at the "+
+   "commands TWO, THREE and FOUR: to include charge cartridge; to include "+
+   "ram cartridge; to include prime; and the time of shoulder arms.  257: "+
+   "the instructor will habituate the recruits, by degrees, to load with the "+
+   "greatest possible promptitude, each without regulating himself by his "+
+   "neighbor, and above all without waiting for him.\n\n"+
+   "THE RING ABOUT EACH MAN.  Every man of the rank and file here carries a "+
+   "piece, and the ring drawn about him shows its attitude: a thin green "+
+   "ring, shouldered and loaded; blue, at a ready; orange, aiming (his "+
+   "facing tick lengthens with the levelled piece); a broken grey ring, "+
+   "discharged and not yet reloaded; and a brass arc filling through a "+
+   "third, two thirds and the whole as he charges, rams and primes.  Click "+
+   "any man to see who he is.",
+   [
+     ["1. Load in four times. 2. LOAD", "load_four",
+      "The whole exercise at one order. The first time is executed at the "+
+      "end of the command LOAD — the times to include CHARGE CARTRIDGE, and "+
+      "the loading arc about each man fills to a third; the instructor then "+
+      "gives TWO, THREE and FOUR in their turn, the company resting on each "+
+      "time, so the arc fills to two thirds at RAM CARTRIDGE, closes at "+
+      "PRIME, and the pieces come to a SHOULDER. In priming, the captain "+
+      "and covering sergeant half face to the right with the men, and face "+
+      "to the front again as the men next them shoulder their pieces (45)."],
+     ["1. Load at will. 2. LOAD", "load_at_will",
+      "The same loading, but continued, and without resting on either of "+
+      "the times (S.S. 256). Each man loads without regulating himself by "+
+      "his neighbor and above all without waiting for him (257), so the "+
+      "company loads raggedly, as it does in battle."]
+   ]],
   ["Article 2: To fire by company",
-   "1. Fire by company. 2. Company. 3. READY. 4. AIM. 5. FIRE. 6. LOAD.  (No "+
-   "movement to animate.)", []],
+   "48. The instructor, wishing to cause the fire by company to be executed, "+
+   "will command:\n\n1. Fire by company. 2. Commence firing.\n\n"+
+   "49. At the first command, the captain will promptly place himself "+
+   "opposite the centre of his company, and four paces in rear of the line "+
+   "of file closers; the covering sergeant will retire to that line, and "+
+   "place himself opposite to his interval.\n\n"+
+   "50. At the second command the captain will add:\n\n"+
+   "1. Company. 2. READY. 3. AIM. 4. FIRE. 5. LOAD.\n\n"+
+   "51. At the command load, the men will load their pieces and then take "+
+   "the position of ready, as prescribed in the school of the soldier.\n\n"+
+   "52. The captain will immediately recommence the firing by the commands:\n\n"+
+   "1. Company. 2. AIM. 3. FIRE. 4. LOAD.\n\n"+
+   "53. The firing will be thus continued until the signal to cease firing "+
+   "is sounded.\n\n"+
+   "54. The captain will sometimes cause aim to be taken to the right and "+
+   "left, simply observing to pronounce right (or left) oblique, before the "+
+   "command aim.\n\n"+
+   "THE AIM (School of the Soldier, Nos. 174-176).  The rear-rank man "+
+   "carries his right foot about eight inches to the right, toward the left "+
+   "heel of the man next on his right, inclining the upper part of the body "+
+   "forward, so that his piece passes clear of his file leader; at the load "+
+   "he brings the foot back beside the other (179).  In the oblique fire "+
+   "both ranks throw back a shoulder and the rear-rank man advances a foot "+
+   "toward the side of the oblique instead (268-271).",
+   [
+     ["1. Fire by company. 2. Commence firing.", "fire_company",
+      "The captain places himself opposite the centre of his company, four "+
+      "paces in rear of the file closers, and the covering sergeant retires "+
+      "to that line opposite his interval (49). The company then comes to a "+
+      "ready, aims, fires and loads, and goes on firing of itself — AIM, "+
+      "FIRE, LOAD over and over (52-53) — until 'Cease firing.' The rear "+
+      "rank carries the right foot eight inches to the right in aiming and "+
+      "brings it back at the load."],
+     ["Right oblique (before the command aim)", "fire_obl_right",
+      "Given while the company is firing (54). Both ranks throw back the "+
+      "right shoulder; the aim is taken to the right, and the rear-rank man "+
+      "advances his left foot toward the right heel of the man next on the "+
+      "right of his file leader (S.S. 268-269)."],
+     ["Left oblique (before the command aim)", "fire_obl_left",
+      "The same to the left: both ranks throw back the left shoulder, and "+
+      "the rear-rank man advances his right foot (S.S. 270-271)."],
+     ["Direct fire again", "fire_obl_none",
+      "The aim returns to the front; the men square themselves upon their "+
+      "original direction."],
+     ["Cease firing", "fire_cease",
+      "63-65. At the signal — in this school, the command 'cease firing' — "+
+      "the men cease. Those who have fired load their pieces and bring them "+
+      "to a shoulder; those at a ready half-cock and shoulder; those at an "+
+      "aim bring down their pieces, half-cock, and shoulder (S.S. 282). The "+
+      "company is thus left loaded and at shouldered arms."],
+     ["POSTS", "fire_posts",
+      "64/66. The bugle note — in this school, the command 'posts' — at "+
+      "which the captain and the covering sergeant promptly resume their "+
+      "places in line, and the alignment of the ranks is rectified."]
+   ]],
   ["Article 3: To fire by file",
-   "1. Fire by file. 2. Company. 3. READY. 4. COMMENCE FIRING.  Firing begins "+
-   "on the right of the company and passes file by file to the left.  (No "+
-   "movement to animate.)", []],
+   "55. The instructor wishing to cause the fire by file to be executed, "+
+   "will command:\n\n"+
+   "1. Fire by file. 2. Company. 3. READY. 4. Commence firing.\n\n"+
+   "56. The third and fourth commands will be executed as prescribed in the "+
+   "school of the soldier, No. 275 and following.\n\n"+
+   "57. The fire will be commenced by the right file of the company; the "+
+   "next file will take aim at the instant the first brings down pieces to "+
+   "re-load, and so on to the left; but this progression will only be "+
+   "observed in the first discharge, after which each man will re-load and "+
+   "fire without regulating himself by others, conforming himself to what is "+
+   "prescribed in the school of the soldier, No. 280.\n\n"+
+   "67. The fire by file being that which is most frequently used against an "+
+   "enemy, it is highly important that it be rendered perfectly familiar to "+
+   "the troops. The instructor will, therefore, give it almost exclusive "+
+   "preference, and labor to cause the men to aim with care, and always, if "+
+   "possible, at some particular object. As it is of the utmost importance "+
+   "that the men should aim with precision in battle, this principle will be "+
+   "rigidly enforced in the exercises for the purposes of instruction.\n\n"+
+   "School of the Soldier, 279: after the first fire, the front and rear "+
+   "rank men will not be required to fire at the same time. 280: each man, "+
+   "after loading, will return to the position of ready, and continue the "+
+   "fire.",
+   [
+     ["1. Fire by file. 2. Company. 3. READY. 4. Commence firing.",
+      "fire_by_file",
+      "The captain and covering sergeant take the posts of 49; the company "+
+      "comes to a ready, and the fire runs file by file from the RIGHT of "+
+      "the company to the left — each file aiming as the file before it "+
+      "brings down pieces to re-load. That progression is observed in the "+
+      "first discharge only (57): thereafter every man loads and fires in "+
+      "his own time, the two men of a file no longer together (S.S. 279), "+
+      "and the fire runs on until 'Cease firing.'"],
+     ["Cease firing", "fire_cease",
+      "As in Article 2 (63-65): the men cease, load if they have fired, and "+
+      "come to a shoulder."],
+     ["POSTS", "fire_posts",
+      "The captain and the covering sergeant resume their places in line "+
+      "(64, 66)."]
+   ]],
   ["Article 4: To fire by rank",
+   "58. The instructor wishing the fire by rank to be executed, will "+
+   "command:\n\n"+
    "1. Fire by rank. 2. Company. 3. READY. 4. Rear rank--AIM. 5. FIRE. "+
-   "6. LOAD.  (No movement to animate.)", []],
+   "6. LOAD.\n\n"+
+   "59. The fifth and sixth commands will be executed as is prescribed in "+
+   "the school of the soldier, No. 285 and following.\n\n"+
+   "60. When the instructor sees one or two pieces in the rear rank at a "+
+   "ready, he will command:\n\n1. Front rank. 2. AIM. 3. FIRE. 4. LOAD.\n\n"+
+   "61. The firing will be continued thus by alternate ranks, until the "+
+   "signal is given to cease firing.\n\n"+
+   "62. The instructor will sometimes cause aim to be taken to the right and "+
+   "left, conforming to what is prescribed No. 54.\n\n"+
+   "63. The instructor will cause the firing to cease, whether by company, "+
+   "by file, or by rank, by sounding the signal to cease firing; and at the "+
+   "instant this sound commences, the men will cease to fire, conforming to "+
+   "what is prescribed in the school of the soldier, No. 282.\n\n"+
+   "64. The signal to cease firing will always be followed by a bugle note; "+
+   "at which sound, the captain and covering sergeant will promptly resume "+
+   "their places in line, and will rectify, if necessary, the alignment of "+
+   "the ranks.\n\n"+
+   "65. In this school, except when powder is used, the signal to cease "+
+   "firing will be indicated by the command cease firing, which will be "+
+   "pronounced by the instructor when he wishes the semblance of firing to "+
+   "cease.\n\n"+
+   "66. The command posts will be likewise substituted, under similar "+
+   "circumstances, for the bugle note employed as the signal for the return "+
+   "of the captain and covering sergeant to their places in line; which "+
+   "command will be given when the instructor sees the men have brought "+
+   "their pieces to a shoulder.",
+   [
+     ["1. Fire by rank. 2. Company. 3. READY. 4. Rear rank--AIM. 5. FIRE. "+
+      "6. LOAD.", "fire_by_rank",
+      "The whole comes to a ready and the REAR rank aims, fires and loads — "+
+      "the opening command carries that first volley with it (58). The "+
+      "firing then WAITS: unlike the fire by company and the fire by file, "+
+      "this one does not run on of itself, because Casey has the captain "+
+      "name the rank for every volley. Give the next command when you see "+
+      "one or two pieces of the rank that has fired come again to a ready "+
+      "(60). Where the company is faced by the rear rank (Art. 5) this "+
+      "first volley falls to the rank that then stands in rear, which is "+
+      "Casey's 'the front rank, now become the rear' (72)."],
+     ["1. Front rank. 2. AIM. 3. FIRE. 4. LOAD.", "fire_rank_front",
+      "60. The captain, seeing the pieces of the rear rank come again to a "+
+      "ready, orders the front rank to aim in its turn; it fires and loads, "+
+      "and comes to a ready again itself. The command is greyed out unless "+
+      "the front rank is the one that has the next fire — the firing is "+
+      "continued by alternate ranks (61)."],
+     ["1. Rear rank. 2. AIM. 3. FIRE. 4. LOAD.", "fire_rank_rear",
+      "61. The firing being continued thus by alternate ranks, the rear "+
+      "rank is ordered to fire again in its turn, and so on, until the "+
+      "signal to cease firing. (Casey writes out the front-rank command at "+
+      "60 and leaves its counterpart to the words 'by alternate ranks'.)"],
+     ["Right oblique (before the command aim)", "fire_obl_right",
+      "62: the instructor sometimes causes aim to be taken to the right and "+
+      "left in the fire by rank also, conforming to No. 54."],
+     ["Left oblique (before the command aim)", "fire_obl_left",
+      "The same to the left."],
+     ["Direct fire again", "fire_obl_none",
+      "The aim returns to the front."],
+     ["Cease firing", "fire_cease",
+      "63-65. The men cease, load if they have fired, and shoulder their "+
+      "pieces."],
+     ["POSTS", "fire_posts",
+      "66. The captain and the covering sergeant resume their places in "+
+      "line, the men having brought their pieces to a shoulder."]
+   ]],
   ["Article 5: To fire by the rear rank",
-   "The company may be made to face about and fire to the rear ... (Not "+
-   "animated in this version.)", []]
+   "68. The instructor will cause the several fires to be executed to the "+
+   "rear, that is, by the rear rank. To effect this, he will command:\n\n"+
+   "1. Face by the rear rank. 2. Company. 3. About--FACE.\n\n"+
+   "69. At the first command, the captain will step out and place himself "+
+   "near to, and facing the right file of his company; the covering "+
+   "sergeant, and file closers, will pass quickly through the captain's "+
+   "interval, and place themselves faced to the rear, the covering sergeant "+
+   "a pace behind the captain, and the file closers two paces from the front "+
+   "rank opposite to their places in line, each passing behind the covering "+
+   "sergeant.\n\n"+
+   "70. At the third command, which will be given at the instant the last "+
+   "file closer shall have passed through the interval, the company will "+
+   "face about; the captain will place himself in his interval in the rear "+
+   "rank, now become the front, and the covering sergeant will cover him in "+
+   "the front rank, now become the rear.\n\n"+
+   "71. The company having faced by the rear rank, the instructor will cause "+
+   "it to execute the fire by company, both direct and oblique, the fire by "+
+   "file, and the fire by rank, by the commands and means prescribed in the "+
+   "three preceding articles; the captain, covering sergeant, and the men "+
+   "will conform themselves, in like manner, to what is therein "+
+   "prescribed.\n\n"+
+   "72. The fire by file will commence on the left of the company, now "+
+   "become the right. In the fire by rank, the firing will commence with the "+
+   "front rank, now become the rear.\n\n"+
+   "73. To resume the proper front, the instructor will command:\n\n"+
+   "1. Face by the front rank. 2. Company. 3. About--FACE.\n\n"+
+   "74. At the first command, the captain, covering sergeant and file "+
+   "closers will conform to what is prescribed Nos. 69 and 70.\n\n"+
+   "75. At the third command, the company having faced about, the captain "+
+   "and covering sergeant will resume their places in line.\n\n"+
+   "76-81. The instructor will impress on the men the importance of aiming "+
+   "always at some particular object, and of holding the piece as prescribed "+
+   "in the school of the soldier, No. 178; he will recommend to the captain "+
+   "to make a short pause between the commands aim and fire, to give the men "+
+   "time to aim with accuracy; he will place himself in position to see the "+
+   "two ranks, in order to detect faults, and will remand, for individual "+
+   "instruction, the man who may be observed to load badly; he will "+
+   "recommend to the soldiers, in the firings, the highest degree of "+
+   "composure or presence of mind; and he will give to the men, as a general "+
+   "principle, to maintain, in the direct fire, the left heel in its place, "+
+   "in order that the alignment of the ranks and files may not be "+
+   "deranged.\n\n"+
+   "82-83. When the firing is executed with cartridges, it is particularly "+
+   "recommended that the men observe, in uncocking, whether smoke escapes "+
+   "from the tube, which is a certain indication that the piece has been "+
+   "discharged ... The instructor will always cause arms to be inspected "+
+   "after firing with cartridges, in order to observe if the fault has been "+
+   "committed, of putting three cartridges, without a discharge, in the same "+
+   "piece, in which case the ball screw will be applied.",
+   [
+     ["1. Face by the rear rank. 2. Company. 3. About--FACE.", "rear_face",
+      "The captain steps out beyond the right file and faces it; the "+
+      "covering sergeant and the file closers pass through the interval he "+
+      "has quitted and post themselves faced to the rear — the sergeant a "+
+      "pace behind the captain, the closers two paces in FRONT of the front "+
+      "rank, opposite their places in line (69). The company then faces "+
+      "about: the rear rank has become the front, the captain takes his "+
+      "interval in it, and the sergeant covers him (70). Note that the "+
+      "company is thereby inverted — its old left is now its right — which "+
+      "Casey states plainly at 72 and does not correct; 73-75 restore the "+
+      "proper front. All three firings may now be given, and will be made "+
+      "to the old rear."],
+     ["1. Face by the front rank. 2. Company. 3. About--FACE.", "front_face",
+      "73-75. The same movement reversed: the company faces about again and "+
+      "the captain and covering sergeant resume their places in line, the "+
+      "company standing as it did before, fronting its proper front."]
+   ]]
 ]],
 ["LESSON III", [
   ["Article 1: To advance in line of battle",
@@ -6377,7 +7272,21 @@ const ORDER_DISPATCH = {
   skirm_rallysec: m => m.odSkirmRallySec(),
   skirm_formsec: m => m.odSkirmFormSec(),
   skirm_capt_escort: m => m.odSkirmCapt(true),
-  skirm_capt_reserve: m => m.odSkirmCapt(false)
+  skirm_capt_reserve: m => m.odSkirmCapt(false),
+  load_four:     m => m.odLoadFour(),
+  load_at_will:  m => m.odLoadAtWill(),
+  fire_company:  m => m.odFireCompany(),
+  fire_by_file:  m => m.odFireByFile(),
+  fire_by_rank:  m => m.odFireByRank(),
+  fire_rank_front: m => m.odFireRankVolley("front"),
+  fire_rank_rear:  m => m.odFireRankVolley("rear"),
+  fire_obl_right: m => m.odFireOblique("right"),
+  fire_obl_left:  m => m.odFireOblique("left"),
+  fire_obl_none:  m => m.odFireOblique(null),
+  fire_cease:    m => m.odFireCease(),
+  fire_posts:    m => m.odFirePosts(),
+  rear_face:     m => m.odFireRearFace(true),
+  front_face:    m => m.odFireRearFace(false)
 };
 
 const STATE_LABEL = {
@@ -6429,7 +7338,10 @@ const STATE_LABEL = {
   SKIRM_FLANK_R: "Skirmish line marching by the right flank",
   SKIRM_FLANK_L: "Skirmish line marching by the left flank",
   SKIRM_RALLY4: "Rallied by fours — each group in its diamond",
-  SKIRM_RALLYSEC: "Rallied by section — the sections massed"
+  SKIRM_RALLYSEC: "Rallied by section — the sections massed",
+  FIRING: "Firing",
+  FIRE_CEASED: "Firing ceased — the captain and covering sergeant out of the ranks",
+  REAR_FACED: "Faced by the rear rank — the company inverted, fronting to its old rear"
 };
 
 if(typeof module !== "undefined" && module.exports){
@@ -6480,6 +7392,14 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   let puffs = [];         // musketry smoke [{x,y,dx,dy,j,t0}]
   let cues = [];          // small floating cues [{id,text,t0,dur}]
   let pendingShots = [];  // scheduled discharges [{id,t}]
+  let pendingPiece = [];  // scheduled changes of attitude [{c,t}] (Lesson II)
+  // Apply every change of attitude still outstanding, at once.  Used when an
+  // order breaks into a firing, so the model is not left half-way through a
+  // loading when the next order is given.
+  function flushPiece(){
+    for(const p of pendingPiece) model._applyPiece(p.c);
+    pendingPiece = [];
+  }
 
   function resetView(){
     view = [-(model.nFiles - 1) * FW / 2, 1];
@@ -6730,10 +7650,42 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     skirm_rally4:   inStates("SKIRM_LINE_HALT"),
     skirm_redeploy: inStates("SKIRM_RALLY4"),
     skirm_rallysec: inStates("SKIRM_LINE_HALT", "SKIRM_RALLY4"),
-    skirm_formsec:  inStates("SKIRM_RALLYSEC")
+    skirm_formsec:  inStates("SKIRM_RALLYSEC"),
+    // ---- Lesson II: the loadings and the firings ----
+    load_four:    inStates("LINE_HALT", "REAR_FACED"),
+    load_at_will: inStates("LINE_HALT", "REAR_FACED"),
+    fire_company: inStates("LINE_HALT", "REAR_FACED"),
+    fire_by_file: inStates("LINE_HALT", "REAR_FACED"),
+    fire_by_rank: inStates("LINE_HALT", "REAR_FACED"),
+    // 60-61: whichever rank has the next fire, as the company now stands.
+    // Live from the moment the opening volley is under way (round > 0), so
+    // the order may be given as the captain gives it -- while the rank that
+    // has fired is still loading, seeing its pieces come again to a ready.
+    fire_rank_front: m => m.state === "FIRING" && m._fire &&
+                          m._fire.mode === "rank" && m._fire.step === "rank" &&
+                          m._fire.round > 0 &&
+                          m._fire.turn === m._rankNominal("front"),
+    fire_rank_rear:  m => m.state === "FIRING" && m._fire &&
+                          m._fire.mode === "rank" && m._fire.step === "rank" &&
+                          m._fire.round > 0 &&
+                          m._fire.turn === m._rankNominal("rear"),
+    // the oblique aim belongs to the fire by company (54) and by rank (62)
+    fire_obl_right: m => m.state === "FIRING" && m._fire &&
+                         m._fire.mode !== "file" && m._fire.oblique !== "right",
+    fire_obl_left:  m => m.state === "FIRING" && m._fire &&
+                         m._fire.mode !== "file" && m._fire.oblique !== "left",
+    fire_obl_none:  m => m.state === "FIRING" && m._fire &&
+                         m._fire.mode !== "file" && !!m._fire.oblique,
+    fire_cease:   inStates("FIRING"),
+    fire_posts:   inStates("FIRE_CEASED"),
+    rear_face:    inStates("LINE_HALT"),
+    front_face:   inStates("REAR_FACED")
   };
   function refreshButtons(){
-    const busy = !!anim && !(model._sk && model._sk.firing);
+    // while a firing is running the beats chain of themselves, so the orders
+    // that may break into it (cease firing, the oblique) stay live
+    const busy = !!anim && !(model._sk && model._sk.firing) &&
+                 !(model._fire && model._fire.running);
     for(const { key, btn } of BTN_REGISTRY){
       const p = ENABLED_WHEN[key];
       btn.disabled = busy || (p ? !p(model) : false);
@@ -6743,7 +7695,12 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   // ---------- orders & animation ----------
   // Orders that may interrupt the firing loop mid-cycle.
   const FIRE_INTERRUPT = { skirm_cease: 1, skirm_halt: 1,
-                           skirm_rally4: 1, skirm_rallysec: 1 };
+                           skirm_rally4: 1, skirm_rallysec: 1,
+                           fire_cease: 1, fire_obl_right: 1,
+                           fire_obl_left: 1, fire_obl_none: 1,
+                           // 60: the captain names the next rank while the
+                           // rank that has fired is still loading
+                           fire_rank_front: 1, fire_rank_rear: 1 };
   // Builds the animation (and consumes the model's scheduled speech, cues
   // and musket discharges) for whatever paths the model has just laid out.
   // Used by runOrder and by the self-chaining fire cycles.
@@ -6758,8 +7715,11 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
       const maxLen = Math.max(...(lenMen.length ? lenMen : moving)
                                  .map(m => m.length));
       const speed = parseFloat(el("inSpeed").value);
+      // an order may take longer than its marching does -- the beat of a
+      // volley, where only the rear rank's eight inches actually move
       anim = { t0: performance.now(),
-               dur: Math.max(600, maxLen / Math.max(0.5, speed) * 1000),
+               dur: Math.max(600, model._extraAnimMs || 0,
+                             maxLen / Math.max(0.5, speed) * 1000),
                perMan: !!model._perManAnim,
                maxLen: maxLen };
       model._perManAnim = false;
@@ -6788,11 +7748,21 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
         pendingShots.push({ id: s.id, t: now + (s.delayMs || 0) });
       model._shots = null;
     }
+    // scheduled changes of attitude (Lesson II): the ripple of a loading,
+    // the successive aims of the fire by file
+    if(model._pieceCues){
+      for(const c of model._pieceCues)
+        pendingPiece.push({ c: c, t: now + (c.delayMs || 0) });
+      model._pieceCues = null;
+    }
   }
   function runOrder(title, casey, label, key, note){
     if(isNarrow()) closeDrawers();
-    if(anim && model._sk && model._sk.firing && FIRE_INTERRUPT[key]){
-      // the order breaks into the firing: settle the current cycle first
+    const firingNow = (model._sk && model._sk.firing) ||
+                      (model._fire && model._fire.running);
+    if(anim && firingNow && FIRE_INTERRUPT[key]){
+      // the order breaks into the firing: settle the current beat first
+      flushPiece();
       model.finish(); anim = null; pendingShots = [];
     }
     if(anim){
@@ -6835,15 +7805,20 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     const hd = ((model.heading * 180/Math.PI) + 90 + 360) % 360;
     const comp = ["N","NE","E","SE","S","SW","W","NW"][
       Math.floor(((hd + 22.5) % 360)/45)];
-    el("stateLbl").textContent = "Formation: " + s +
-      (model._sk && model._sk.firing ? " — FIRING" : "") +
+    const f = model._fire;
+    const firing = (model._sk && model._sk.firing) ? " — FIRING"
+      : (f && f.running)
+        ? " — fire by " + f.mode + (f.oblique ? ", " + f.oblique + " oblique" : "")
+        : "";
+    el("stateLbl").textContent = "Formation: " + s + firing +
       "  |  Front: " + comp;
   }
 
   // ---------- drawing ----------
   function draw(){
     const rb = document.getElementById("readyBadge");
-    if(anim && model._sk && model._sk.firing){
+    if(anim && ((model._sk && model._sk.firing) ||
+                (model._fire && model._fire.running))){
       if(rb.textContent !== "FIRING"){
         rb.textContent = "FIRING";
         rb.style.background = "#f3d3c4"; rb.style.color = "#8a3a1a";
@@ -6880,15 +7855,19 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
         }
       }
       if(f >= 1){
+        flushPiece();
         model.finish(); anim = null;
-        if(model._sk && model._sk.firing &&
-           ["SKIRM_LINE_HALT", "SKIRM_ADVANCE", "SKIRM_RETREAT",
-            "SKIRM_RALLY4"].indexOf(model.state) >= 0){
-          model._skFireCycle();
-          launchAnim(false);
-        }
+        // a firing goes on of itself until the signal to cease
+        if(model._chainNext()) launchAnim(false);
         updateState();
       }
+    }
+
+    // changes of attitude that have come due (Lesson II)
+    if(pendingPiece.length){
+      const nowA = performance.now();
+      for(const p of pendingPiece) if(p.t <= nowA) model._applyPiece(p.c);
+      pendingPiece = pendingPiece.filter(p => p.t > nowA);
     }
 
     // musketry: spawn the discharges that have come due
@@ -6977,12 +7956,16 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
         ctx.strokeStyle = "#D97706"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(sx, sy, r + 3.5, 0, Math.PI*2); ctx.stroke();
       }
-      // facing tick
+      // the attitude of the piece (Lesson II)
+      pieceRing(sx, sy, r, m);
+      // facing tick — lengthened while the piece is at an aim
       const fv = vec(m.facing);
-      ctx.strokeStyle = ring; ctx.lineWidth = 2;
+      const tick = m.piece === "aim" ? 0.62*P : 0.3*P;
+      ctx.strokeStyle = m.piece === "aim" ? PIECE_COL.aim : ring;
+      ctx.lineWidth = m.piece === "aim" ? 2.6 : 2;
       ctx.beginPath();
       ctx.moveTo(sx + fv[0]*r, sy + fv[1]*r);
-      ctx.lineTo(sx + fv[0]*(r + 0.3*P), sy + fv[1]*(r + 0.3*P));
+      ctx.lineTo(sx + fv[0]*(r + tick), sy + fv[1]*(r + tick));
       ctx.stroke();
       ctx.fillStyle = fill;
       ctx.strokeStyle = ring; ctx.lineWidth = id === selId ? 2.4 : 1.6;
@@ -7156,6 +8139,37 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
     ctx.globalAlpha = 1;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
   }
+  // The attitude of a man's piece, drawn as an outer ring (Lesson II).  A
+  // loading shows as an arc filling through its three times — charge, ram,
+  // prime — so a company reloading reads at a glance; a discharged piece
+  // shows as a broken grey ring until its owner begins to load again.
+  const PIECE_COL = { ready:"#2E6FA8", aim:"#C2571E", fired:"#8F8878",
+                      loaded:"#4E7A3C", loading:"#B4863A" };
+  const LOAD_FRAC = { charge:1/3, ram:2/3, prime:1 };
+  function pieceRing(sx, sy, r, m){
+    const st = m.piece;
+    if(st === "shoulder" && !m.loaded) return;
+    const rr = r + 3.2;
+    if(LOAD_FRAC[st] !== undefined){
+      ctx.strokeStyle = PIECE_COL.loading; ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(sx, sy, rr, -Math.PI/2,
+              -Math.PI/2 + LOAD_FRAC[st] * Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
+    if(st === "shoulder"){        // shouldered, the piece loaded
+      ctx.strokeStyle = PIECE_COL.loaded; ctx.lineWidth = 1.4;
+    } else if(st === "fired"){
+      ctx.strokeStyle = PIECE_COL.fired; ctx.lineWidth = 2;
+      ctx.setLineDash([3, 3]);
+    } else {
+      ctx.strokeStyle = PIECE_COL[st] || PIECE_COL.loaded;
+      ctx.lineWidth = st === "aim" ? 2.8 : 2.2;
+    }
+    ctx.beginPath(); ctx.arc(sx, sy, rr, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
   function drawPill(text, x, y, fpx, color){
     ctx.font = "bold " + fpx + "px Georgia, serif";
     const tw = ctx.measureText(text).width;
@@ -7264,7 +8278,7 @@ if(typeof window !== "undefined" && typeof document !== "undefined"){
   el("inZoom").addEventListener("input", e => { zoom = parseFloat(e.target.value); });
   function rebuild(){
     anim = null; arrows = []; selId = null; speech = [];
-    puffs = []; cues = []; pendingShots = [];
+    puffs = []; cues = []; pendingShots = []; pendingPiece = [];
     model.build(parseInt(el("inFiles").value) || 20,
                 el("inCpl8").checked, el("in3Lt").checked);
     resetView(); updateState();
